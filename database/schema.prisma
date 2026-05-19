@@ -1,0 +1,202 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserPlan {
+  STARTER
+  GROWTH
+  AGENCY
+}
+
+enum JobStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum JobType {
+  CRAWL_WEBSITE
+  GENERATE_ARTICLE
+  KEYWORD_RESEARCH
+  PUBLISH_TO_CMS
+  TRACK_RANKINGS
+  CREATE_CONTENT_PLAN
+}
+
+enum ArticleStatus {
+  DRAFT
+  GENERATING
+  READY
+  PUBLISHED
+  FAILED
+}
+
+enum CMSType {
+  WORDPRESS
+  GHOST
+  SHOPIFY
+  CUSTOM_WEBHOOK
+}
+
+model User {
+  id            String    @id @default(uuid())
+  email         String    @unique
+  passwordHash  String
+  name          String?
+  plan          UserPlan  @default(STARTER)
+  isActive      Boolean   @default(true)
+  articlesUsed  Int       @default(0)
+  articlesLimit Int       @default(30)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  projects      Project[]
+}
+
+model Project {
+  id              String           @id @default(uuid())
+  userId          String
+  domain          String
+  name            String
+  niche           String?
+  targetAudience  String?
+  toneOfVoice     String           @default("professional")
+  language        String           @default("en")
+  country         String           @default("US")
+  crawlStatus     String           @default("IDLE")
+  lastCrawledAt   DateTime?
+  
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  keywords        Keyword[]
+  articles        Article[]
+  contentPlans    ContentPlan[]
+  analytics       ProjectAnalytics[]
+  cmsIntegrations CMSIntegration[]
+  jobs            Job[]
+  backlinks       Backlink[]
+
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+}
+
+model Keyword {
+  id              String   @id @default(uuid())
+  projectId       String
+  term            String
+  volume          Int?     @default(0)
+  difficulty      Int?     @default(0)
+  cpc             Float?   @default(0)
+  intent          String?  // informational, transactional, etc.
+  currentRank     Int?
+  previousRank    Int?
+  targetUrl       String?
+  
+  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  articles        Article[]
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([projectId, term])
+}
+
+model Article {
+  id              String        @id @default(uuid())
+  projectId       String
+  keywordId       String?
+  title           String
+  content         Json?         // Structured content blocks
+  htmlContent     String?       @db.Text
+  slug            String
+  status          ArticleStatus @default(DRAFT)
+  metaTitle       String?
+  metaDescription String?
+  
+  project         Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  keyword         Keyword?      @relation(fields: [keywordId], references: [id])
+  contentPlan     ContentPlan?  @relation(fields: [contentPlanId], references: [id])
+  contentPlanId   String?
+  
+  cmsPostId       String?       // ID in external CMS
+  publishedUrl    String?
+
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+}
+
+model ContentPlan {
+  id          String    @id @default(uuid())
+  projectId   String
+  name        String
+  description String?
+  status      String    @default("ACTIVE")
+  
+  project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  articles    Article[]
+  
+  createdAt   DateTime  @default(now())
+}
+
+model ProjectAnalytics {
+  id              String   @id @default(uuid())
+  projectId       String
+  date            DateTime @default(now())
+  visibilityIndex Float?
+  avgPosition     Float?
+  totalKeywords   Int?
+  top3Count       Int?
+  top10Count      Int?
+  organicTraffic  Int?
+
+  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+model CMSIntegration {
+  id          String   @id @default(uuid())
+  projectId   String
+  cmsType     CMSType
+  siteUrl     String
+  apiKey      String   // Encrypted
+  apiSecret   String?  // Encrypted
+  isActive    Boolean  @default(true)
+  isVerified  Boolean  @default(false)
+  
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Job {
+  id          String    @id @default(uuid())
+  projectId   String
+  type        JobType
+  status      JobStatus @default(PENDING)
+  payload     Json?
+  result      Json?
+  error       String?
+  
+  project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model Backlink {
+  id          String   @id @default(uuid())
+  projectId   String
+  url         String
+  domainAuth  Int?
+  anchorText  String?
+  isFollow    Boolean  @default(true)
+  
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  
+  createdAt   DateTime @default(now())
+}

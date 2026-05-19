@@ -1,6 +1,6 @@
 {
   "name": "RankSyncer",
-  "description": "An all-in-one SEO and content synchronization platform for keyword tracking, AI article generation, and SERP analytics.",
+  "description": "Autonomous SEO growth platform with AI content generation, keyword tracking, and CMS synchronization. Features a Next.js dashboard and Express backend.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
