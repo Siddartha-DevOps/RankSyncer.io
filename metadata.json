@@ -1,0 +1,6 @@
+{
+  "name": "RankSyncer",
+  "description": "An all-in-one SEO and content synchronization platform for keyword tracking, AI article generation, and SERP analytics.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
