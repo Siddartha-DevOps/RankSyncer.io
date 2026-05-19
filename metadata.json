@@ -1,6 +1,1 @@
-{
-  "name": "RankSyncer",
-  "description": "Autonomous SEO growth platform with AI content generation, keyword tracking, and CMS synchronization. Features a Next.js dashboard and Express backend.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}
+{"name": "RankSyncer"}
