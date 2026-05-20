@@ -1,0 +1,93 @@
+{
+  "entities": {
+    "Project": {
+      "title": "Project",
+      "description": "An organic domain being tracked and optimized",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "domain": { "type": "string" },
+        "visibilityIndex": { "type": "integer" },
+        "avgPosition": { "type": "number" },
+        "organicTraffic": { "type": "integer" },
+        "cmsPlatform": { "type": "string", "enum": ["wordpress", "webflow", "ghost", "custom"] },
+        "crawlStatus": { "type": "string", "enum": ["STALE", "CRAWLING", "COMPLETED", "FAILED"] },
+        "lastCrawledAt": { "type": "string", "format": "date-time" },
+        "crawlHistory": { "type": "array" },
+        "ownerId": { "type": "string" }
+      },
+      "required": ["id", "name", "domain", "ownerId"]
+    },
+    "Keyword": {
+      "title": "Keyword",
+      "description": "A target search term within a project",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "projectId": { "type": "string" },
+        "term": { "type": "string" },
+        "volume": { "type": "integer" },
+        "difficulty": { "type": "integer" },
+        "intent": { "type": "string", "enum": ["Informational", "Transactional", "Commercial", "Navigational"] },
+        "currentRank": { "type": "integer" },
+        "previousRank": { "type": "integer" },
+        "ownerId": { "type": "string" }
+      },
+      "required": ["id", "projectId", "term", "ownerId"]
+    },
+    "Article": {
+      "title": "Article",
+      "description": "An SEO article drafted for publication",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "projectId": { "type": "string" },
+        "title": { "type": "string" },
+        "slug": { "type": "string" },
+        "targetKeyword": { "type": "string" },
+        "wordCount": { "type": "integer" },
+        "seoScore": { "type": "integer" },
+        "status": { "type": "string", "enum": ["Draft", "Reviewing", "Ready", "Published"] },
+        "content": { "type": "string" },
+        "lastEdited": { "type": "string", "format": "date-time" },
+        "metaDescription": { "type": "string" },
+        "ownerId": { "type": "string" }
+      },
+      "required": ["id", "projectId", "title", "ownerId"]
+    },
+    "CrawlerLog": {
+      "title": "CrawlerLog",
+      "description": "System crawler execution history event",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "type": { "type": "string", "enum": ["info", "success", "warn", "error"] },
+        "message": { "type": "string" },
+        "module": { "type": "string", "enum": ["SERP_CRAWLER", "BACKLINK_CHECK", "AI_WRITER", "CMS_SYNC"] },
+        "ownerId": { "type": "string" },
+        "projectId": { "type": "string" }
+      },
+      "required": ["id", "timestamp", "type", "message", "ownerId"]
+    }
+  },
+  "firestore": {
+    "/projects/{projectId}": {
+      "schema": "Project",
+      "description": "Root collection for SEO active domains"
+    },
+    "/projects/{projectId}/keywords/{keywordId}": {
+      "schema": "Keyword",
+      "description": "Keywords tracked inside of specific projects"
+    },
+    "/projects/{projectId}/articles/{articleId}": {
+      "schema": "Article",
+      "description": "Generated content briefs and posts targeting keyword terms"
+    },
+    "/projects/{projectId}/logs/{logId}": {
+      "schema": "CrawlerLog",
+      "description": "System diagnostic and crawling telemetry history logs"
+    }
+  }
+}

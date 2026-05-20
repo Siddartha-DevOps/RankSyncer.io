@@ -1,1 +1,6 @@
-{"name": "RankSyncer"}
+{
+  "name": "RankSyncer",
+  "description": "Autonomous SEO and Keyword monitoring dashboard with dynamic CMS content syncs and on-page SEO analysis audits",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

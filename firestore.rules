@@ -1,0 +1,153 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(ownerId) {
+      return isSignedIn() && request.auth.uid == ownerId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // 1. PROJECT VALIDATION & ACCESS
+    function isValidProject(data) {
+      return data.keys().hasAll(['id', 'name', 'domain', 'ownerId'])
+        && data.id is string && data.id.size() <= 128
+        && data.name is string && data.name.size() <= 200
+        && data.domain is string && data.domain.size() <= 200
+        && data.ownerId == request.auth.uid
+        && (!data.keys().contains('visibilityIndex') || data.visibilityIndex is int)
+        && (!data.keys().contains('avgPosition') || data.avgPosition is number)
+        && (!data.keys().contains('organicTraffic') || data.organicTraffic is int)
+        && (!data.keys().contains('cmsPlatform') || data.cmsPlatform in ['wordpress', 'webflow', 'ghost', 'custom'])
+        && (!data.keys().contains('crawlStatus') || data.crawlStatus in ['STALE', 'CRAWLING', 'COMPLETED', 'FAILED']);
+    }
+
+    match /projects/{projectId} {
+      allow get: if isSignedIn() && isOwner(resource.data.ownerId);
+      allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
+      
+      allow create: if isSignedIn() 
+        && isValidId(projectId) 
+        && isValidProject(request.resource.data)
+        && request.resource.data.id == projectId;
+
+      allow update: if isSignedIn() 
+        && isOwner(resource.data.ownerId) 
+        && isValidProject(request.resource.data)
+        && request.resource.data.ownerId == resource.data.ownerId;
+
+      allow delete: if isSignedIn() && isOwner(resource.data.ownerId);
+
+      // Parent validation function for sub-resource checks
+      function isProjectOwner(pId) {
+        return get(/databases/$(database)/documents/projects/$(pId)).data.ownerId == request.auth.uid;
+      }
+
+      // 2. KEYWORD VALIDATION & ACCESS
+      function isValidKeyword(data) {
+        return data.keys().hasAll(['id', 'projectId', 'term', 'ownerId'])
+          && data.id is string && data.id.size() <= 128
+          && data.projectId == projectId
+          && data.term is string && data.term.size() <= 200
+          && data.ownerId == request.auth.uid
+          && (!data.keys().contains('volume') || data.volume is int)
+          && (!data.keys().contains('difficulty') || data.difficulty is int)
+          && (!data.keys().contains('intent') || data.intent in ['Informational', 'Transactional', 'Commercial', 'Navigational'])
+          && (!data.keys().contains('currentRank') || data.currentRank is int)
+          && (!data.keys().contains('previousRank') || data.previousRank is int);
+      }
+
+      match /keywords/{keywordId} {
+        allow get: if isSignedIn() && isProjectOwner(projectId);
+        allow list: if isSignedIn() && isProjectOwner(projectId);
+
+        allow create: if isSignedIn()
+          && isValidId(keywordId)
+          && isProjectOwner(projectId)
+          && isValidKeyword(request.resource.data)
+          && request.resource.data.id == keywordId;
+
+        allow update: if isSignedIn()
+          && isProjectOwner(projectId)
+          && isValidKeyword(request.resource.data)
+          && request.resource.data.ownerId == resource.data.ownerId;
+
+        allow delete: if isSignedIn() && isProjectOwner(projectId);
+      }
+
+      // 3. ARTICLE VALIDATION & ACCESS
+      function isValidArticle(data) {
+        return data.keys().hasAll(['id', 'projectId', 'title', 'ownerId'])
+          && data.id is string && data.id.size() <= 128
+          && data.projectId == projectId
+          && data.title is string && data.title.size() <= 300
+          && data.ownerId == request.auth.uid
+          && (!data.keys().contains('slug') || data.slug is string)
+          && (!data.keys().contains('targetKeyword') || data.targetKeyword is string)
+          && (!data.keys().contains('wordCount') || data.wordCount is int)
+          && (!data.keys().contains('seoScore') || data.seoScore is int)
+          && (!data.keys().contains('status') || data.status in ['Draft', 'Reviewing', 'Ready', 'Published'])
+          && (!data.keys().contains('content') || data.content is string)
+          && (!data.keys().contains('metaDescription') || data.metaDescription is string);
+      }
+
+      match /articles/{articleId} {
+        allow get: if isSignedIn() && isProjectOwner(projectId);
+        allow list: if isSignedIn() && isProjectOwner(projectId);
+
+        allow create: if isSignedIn()
+          && isValidId(articleId)
+          && isProjectOwner(projectId)
+          && isValidArticle(request.resource.data)
+          && request.resource.data.id == articleId;
+
+        allow update: if isSignedIn()
+          && isProjectOwner(projectId)
+          && isValidArticle(request.resource.data)
+          && request.resource.data.ownerId == resource.data.ownerId;
+
+        allow delete: if isSignedIn() && isProjectOwner(projectId);
+      }
+
+      // 4. CRAWLER LOG VALIDATION & ACCESS
+      function isValidCrawlerLog(data) {
+        return data.keys().hasAll(['id', 'timestamp', 'type', 'message', 'ownerId'])
+          && data.id is string && data.id.size() <= 128
+          && data.ownerId == request.auth.uid
+          && data.type in ['info', 'success', 'warn', 'error']
+          && data.message is string && data.message.size() <= 1000
+          && (!data.keys().contains('projectId') || data.projectId == projectId);
+      }
+
+      match /logs/{logId} {
+        allow get: if isSignedIn() && isProjectOwner(projectId);
+        allow list: if isSignedIn() && isProjectOwner(projectId);
+
+        allow create: if isSignedIn()
+          && isValidId(logId)
+          && isProjectOwner(projectId)
+          && isValidCrawlerLog(request.resource.data)
+          && request.resource.data.id == logId;
+
+        allow update: if isSignedIn()
+          && isProjectOwner(projectId)
+          && isValidCrawlerLog(request.resource.data)
+          && request.resource.data.ownerId == resource.data.ownerId;
+
+        allow delete: if isSignedIn() && isProjectOwner(projectId);
+      }
+    }
+  }
+}
