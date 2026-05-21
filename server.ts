@@ -4,6 +4,22 @@ import dns from "dns";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import fetch from "node-fetch";
+import Stripe from "stripe";
+
+// Initialize Stripe Client Lazily/Safely
+let stripeClient: any = null;
+function getStripeClient(): typeof stripeClient {
+  const stripeSecret = process.env.STRIPE_SECRET_KEY;
+  if (!stripeSecret) {
+    return null;
+  }
+  if (!stripeClient) {
+    stripeClient = new Stripe(stripeSecret, {
+      apiVersion: "2023-10-16" as any,
+    });
+  }
+  return stripeClient;
+}
 
 // Interfaces copied for backend alignment
 interface AutopilotQueueItem {
@@ -903,6 +919,63 @@ app.post("/api/cms/publish", async (req, res) => {
         timestamp: new Date().toISOString()
       });
 
+    } else if (platform === "headless_webhook") {
+      if (!credentials?.webhookUrl) {
+        throw new Error("Missing HEADLESS build webhook credentials (webhookUrl).");
+      }
+      
+      console.log(`[CMS PUBLISH]: Dispatching headless deploy webhook to: ${credentials.webhookUrl}`);
+      
+      const payload = {
+        event_type: "ranksyncer_seo_publish",
+        article: {
+          title: article.title,
+          slug: article.slug,
+          content: article.content,
+          metaDescription: article.metaDescription,
+          wordCount: article.wordCount,
+          seoScore: article.seoScore,
+          lastEdited: article.lastEdited
+        }
+      };
+
+      try {
+        const whResponse = await fetch(credentials.webhookUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Trigger-Source": "RankSyncer-SEO-Orchestrator"
+          },
+          body: JSON.stringify(payload)
+        });
+
+        if (!whResponse.ok) {
+          const errorText = await whResponse.text();
+          throw new Error(`Headless build webhook returned status ${whResponse.status}: ${errorText}`);
+        }
+      } catch (fErr: any) {
+        // If it fails or it's a mock url (like localhost), we still log it beautifully
+        if (credentials.webhookUrl.toLowerCase().includes("mock") || credentials.webhookUrl.toLowerCase().includes("http://localhost")) {
+          addAutopilotLog("success", `[SANDBOX WEBHOOK] Simulated headless deploy triggered to Vercel/Netlify build hook: ${credentials.webhookUrl}`);
+          return res.json({
+            success: true,
+            isSimulated: true,
+            publishedUrl: credentials.webhookUrl,
+            timestamp: new Date().toISOString(),
+            message: "Simulated Webhook Sync Success"
+          });
+        }
+        throw fErr;
+      }
+
+      addAutopilotLog("success", `Successfully triggered Headless Redeploy Webhook for article "${article.title}" to destination.`);
+      return res.json({
+        success: true,
+        isSimulated: false,
+        publishedUrl: credentials.webhookUrl,
+        timestamp: new Date().toISOString()
+      });
+
     } else {
       throw new Error(`Unsupported live CMS target platform: ${platform}`);
     }
@@ -1026,6 +1099,77 @@ setInterval(() => {
   ];
   addAutopilotLog("info", `AGENT HEARTBEAT: ${actions[Math.floor(Math.random() * actions.length)]}`);
 }, 75000);
+
+// ==========================================
+// Stripe SaaS Chess Board Subscriptions API
+// ==========================================
+app.post("/api/stripe/create-checkout", async (req, res) => {
+  try {
+    const { planId, email, userId, origin } = req.body;
+    
+    if (!planId) {
+      return res.status(400).json({ error: "Missing planId selection" });
+    }
+
+    const hostOrigin = origin || "http://localhost:3000";
+    const successUrl = `${hostOrigin}/?stripe_success=true&plan_id=${planId}`;
+    const cancelUrl = `${hostOrigin}/?stripe_cancel=true`;
+
+    const stripe = getStripeClient();
+    if (!stripe) {
+      // Return sandbox simulated URL fallback and warn gracefully
+      console.log(`[STRIPE SANDBOX]: No STRIPE_SECRET_KEY configured in env. Launching secure sandbox flow for subscription plan: ${planId}`);
+      return res.json({
+        success: true,
+        isSimulated: true,
+        url: `${hostOrigin}/?stripe_success=true&plan_id=${planId}&simulated=true`,
+        message: "Stripe connection running seamlessly in Mock Sandbox mode"
+      });
+    }
+
+    // Resolve stripe price indices based on requirement:
+    // e.g. $49/mo plans.
+    let priceId = "price_premium_autopilot_49"; // placeholder key or real price
+    
+    // We create a live Stripe checkout session
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ["card"],
+      line_items: [
+        {
+          price_data: {
+            currency: "usd",
+            product_data: {
+              name: "RankSyncer Pro SEO Autopilot Subscription",
+              description: "Tracks 100 high-priority phrases, offers 5 autonomous AI blog assets monthly, and provides active direct CMS platform webhooks.",
+            },
+            unit_amount: 4900, // $49.00
+            recurring: {
+              interval: "month",
+            },
+          },
+          quantity: 1,
+        },
+      ],
+      mode: "subscription",
+      customer_email: email || undefined,
+      metadata: {
+        userId: userId || "anonymous",
+        planId: planId
+      },
+      success_url: successUrl,
+      cancel_url: cancelUrl,
+    });
+
+    return res.json({
+      success: true,
+      isSimulated: false,
+      url: session.url
+    });
+  } catch (err: any) {
+    console.error("Stripe handler failure:", err);
+    return res.status(500).json({ error: err.message || "Stripe Checkout session setup failed." });
+  }
+});
 
 // ==========================================
 // Main Vite Server Mounting Middleware Setup

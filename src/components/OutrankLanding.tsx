@@ -27,9 +27,10 @@ import {
 interface OutrankLandingProps {
   onLaunchApp: () => void;
   projectsCount: number;
+  onPricingClick?: () => void;
 }
 
-export default function OutrankLanding({ onLaunchApp, projectsCount }: OutrankLandingProps) {
+export default function OutrankLanding({ onLaunchApp, projectsCount, onPricingClick }: OutrankLandingProps) {
   // Interactive States for landing page features
   const [typedKeyword, setTypedKeyword] = useState('best micro saas ideas 2026');
   const [playgroundKeyword, setPlaygroundKeyword] = useState('');
@@ -138,7 +139,12 @@ export default function OutrankLanding({ onLaunchApp, projectsCount }: OutrankLa
             <a href="#how-it-works" className="hover:text-emerald-600 transition-colors">How it Works</a>
             <a href="#features" className="hover:text-emerald-600 transition-colors">Features</a>
             <a href="#playground" className="hover:text-emerald-600 transition-colors">AI Playground</a>
-            <a href="#pricing" className="hover:text-emerald-600 transition-colors">Pricing</a>
+            <button 
+              onClick={() => onPricingClick ? onPricingClick() : document.getElementById('pricing')?.scrollIntoView({ behavior: 'smooth' })} 
+              className="hover:text-emerald-600 transition-colors cursor-pointer text-left bg-transparent border-none font-semibold text-sm text-slate-600"
+            >
+              Pricing
+            </button>
             <button onClick={onLaunchApp} className="hover:text-emerald-600 transition-colors text-slate-650 cursor-pointer">
               Control Panel ({projectsCount} site{projectsCount !== 1 ? 's' : ''})
             </button>

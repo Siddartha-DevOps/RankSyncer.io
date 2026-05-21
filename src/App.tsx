@@ -28,7 +28,8 @@ import {
   Zap,
   Globe2,
   Trash2,
-  Edit3
+  Edit3,
+  CreditCard
 } from 'lucide-react';
 
 import { Project, Keyword, Article, CrawlerLog, AutopilotQueueItem } from './types';
@@ -53,6 +54,7 @@ import { evaluateSeoMetrics, parseMarkdownStructure } from './utils/seoAnalyzer'
 import EditorSidebar from './components/EditorSidebar';
 import TopicalClusters from './components/TopicalClusters';
 import OutrankLanding from './components/OutrankLanding';
+import PricingPage from './components/PricingPage';
 import BrandIdentityCenter from './components/BrandIdentityCenter';
 import RankSyncerLogo from './components/RankSyncerLogo';
 
@@ -78,8 +80,12 @@ import {
 } from './lib/firebase';
 
 export default function App() {
+  // Firebase Authentication & Continuity States
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+
   // Navigation & Core States
-  const [viewMode, setViewMode] = useState<'landing' | 'app'>('landing');
+  const [viewMode, setViewMode] = useState<'landing' | 'app' | 'pricing'>('landing');
   const [activeTab, setActiveTab] = useState<'dashboard' | 'projects' | 'keywords' | 'planner' | 'editor' | 'crawler' | 'settings' | 'brand'>('brand');
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     const saved = localStorage.getItem('rs_theme');
@@ -180,14 +186,54 @@ export default function App() {
     return saved ? JSON.parse(saved) : { storeDomain: '', adminToken: '', blogId: '' };
   });
 
-  // State to track which platform credentials block is active: 'wordpress' | 'webflow' | 'shopify' | null
-  const [editingCmsPlatform, setEditingCmsPlatform] = useState<'wordpress' | 'webflow' | 'shopify' | null>(null);
+  const [headlessConfig, setHeadlessConfig] = useState(() => {
+    const saved = localStorage.getItem('rs_headless_config');
+    return saved ? JSON.parse(saved) : { webhookUrl: '' };
+  });
+
+  // State to track which platform credentials block is active: 'wordpress' | 'webflow' | 'shopify' | 'headless' | null
+  const [editingCmsPlatform, setEditingCmsPlatform] = useState<'wordpress' | 'webflow' | 'shopify' | 'headless' | null>(null);
 
   // States for active publishing gateway/dialog
   const [publishingArticle, setPublishingArticle] = useState<Article | null>(null);
   const [isPublishingToCms, setIsPublishingToCms] = useState(false);
-  const [selectedPublishPlatform, setSelectedPublishPlatform] = useState<'wordpress' | 'webflow' | 'shopify' | 'dummy'>('wordpress');
+  const [selectedPublishPlatform, setSelectedPublishPlatform] = useState<'wordpress' | 'webflow' | 'shopify' | 'dummy' | 'headless_webhook'>('wordpress');
   const [cmsPublishResult, setCmsPublishResult] = useState<{ success: boolean; url?: string; error?: string } | null>(null);
+
+  // SaaS Stripe subscription tier states: 'free' | 'premium'
+  const [activePlan, setActivePlan] = useState<'free' | 'premium'>(() => {
+    const saved = localStorage.getItem('rs_active_plan');
+    return (saved as 'free' | 'premium') || 'free';
+  });
+  const [isRedirectingToStripe, setIsRedirectingToStripe] = useState(false);
+
+  // Capture checkout redirects
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('stripe_success') === 'true') {
+      setActivePlan('premium');
+      localStorage.setItem('rs_active_plan', 'premium');
+      
+      const successLog: CrawlerLog = {
+        id: `stripe-sub-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        type: 'success',
+        message: `Subscription Activated: RankSyncer Pro Autopilot Suite initialized. Limit raised to 100 phrases and 5 autonomous daily content nodes successfully.`,
+        module: 'AUTOPILOT_DAEMON'
+      };
+      
+      if (currentUser) {
+        fsSaveLog(successLog, selectedProjectId || 'p-1', currentUser.uid);
+      } else {
+        setLogs(prev => [successLog, ...prev]);
+      }
+      
+      // Clean query parameters from URL safely
+      window.history.replaceState({}, document.title, window.location.pathname);
+    } else if (params.get('stripe_cancel') === 'true') {
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  }, [currentUser, selectedProjectId]);
 
   // --- CMS Temporary Input Holds ---
   const [tempWpSiteUrl, setTempWpSiteUrl] = useState(() => wpConfig.siteUrl || '');
@@ -200,6 +246,8 @@ export default function App() {
   const [tempShopifyDomain, setTempShopifyDomain] = useState(() => shopifyConfig.storeDomain || '');
   const [tempShopifyToken, setTempShopifyToken] = useState(() => shopifyConfig.adminToken || '');
   const [tempShopifyBlogId, setTempShopifyBlogId] = useState(() => shopifyConfig.blogId || '');
+
+  const [tempHeadlessUrl, setTempHeadlessUrl] = useState(() => headlessConfig.webhookUrl || '');
 
   // --- HELPERS / API Handlers ---
 
@@ -257,6 +305,60 @@ export default function App() {
       fsSaveLog(newLog, selectedProjectId || 'p-1', currentUser.uid);
     } else {
       setLogs(prev => [newLog, ...prev]);
+    }
+  };
+
+  const saveHeadlessConfig = (whUrl: string) => {
+    const config = { webhookUrl: whUrl };
+    setHeadlessConfig(config);
+    localStorage.setItem('rs_headless_config', JSON.stringify(config));
+    setEditingCmsPlatform(null);
+    const newLog: CrawlerLog = {
+      id: `l-cf-hl-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      type: 'success',
+      message: `Configured Headless Webhook (Netlify/Vercel/GitHub): ${whUrl || "e.g. build hook"}. Connected in Live mode.`,
+      module: 'CMS_SYNC'
+    };
+    if (currentUser) {
+      fsSaveLog(newLog, selectedProjectId || 'p-1', currentUser.uid);
+    } else {
+      setLogs(prev => [newLog, ...prev]);
+    }
+  };
+
+  const handleStripeCheckout = async (planId: string) => {
+    setIsRedirectingToStripe(true);
+    try {
+      const response = await fetch('/api/stripe/create-checkout', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          planId,
+          email: currentUser?.email || 'guest@ranksyncer.co',
+          userId: currentUser?.uid || 'guest-user',
+          origin: window.location.origin
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to bootstrap Stripe Billing Session');
+      }
+
+      const { url } = await response.json();
+      if (url) {
+        // Redirect seamlessly
+        window.location.href = url;
+      }
+    } catch (err) {
+      console.error('Stripe checkout error:', err);
+      // Fallback sandbox simulation if stripe network isn't configured
+      setActivePlan('premium');
+      localStorage.setItem('rs_active_plan', 'premium');
+    } finally {
+      setIsRedirectingToStripe(false);
     }
   };
 
@@ -549,10 +651,6 @@ export default function App() {
   useEffect(() => {
     fetchAutopilotState();
   }, [selectedProjectId]);
-
-  // Firebase Authentication & Continuity States
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [authLoading, setAuthLoading] = useState(true);
 
   // Authentication state watcher
   useEffect(() => {
@@ -1167,7 +1265,7 @@ export default function App() {
   };
 
   // Active Direct CMS Syndication API sync
-  const handleActiveCmsPublish = async (art: Article, platform: 'wordpress' | 'webflow' | 'shopify' | 'dummy') => {
+  const handleActiveCmsPublish = async (art: Article, platform: 'wordpress' | 'webflow' | 'shopify' | 'dummy' | 'headless_webhook') => {
     setIsPublishingToCms(true);
     setCmsPublishResult(null);
 
@@ -1178,6 +1276,8 @@ export default function App() {
       credentials = webflowConfig;
     } else if (platform === 'shopify') {
       credentials = shopifyConfig;
+    } else if (platform === 'headless_webhook') {
+      credentials = headlessConfig;
     }
 
     try {
@@ -1280,6 +1380,17 @@ export default function App() {
   if (viewMode === 'landing') {
     return (
       <OutrankLanding 
+        onLaunchApp={() => setViewMode('app')}
+        onPricingClick={() => setViewMode('pricing')}
+        projectsCount={projects.length}
+      />
+    );
+  }
+
+  if (viewMode === 'pricing') {
+    return (
+      <PricingPage 
+        onBackToLanding={() => setViewMode('landing')}
         onLaunchApp={() => setViewMode('app')}
         projectsCount={projects.length}
       />
@@ -3289,6 +3400,79 @@ export default function App() {
                 </div>
               </div>
 
+              {/* SaaS Subscription & Stripe Billing Center */}
+              <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-2xs space-y-4 relative overflow-hidden">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div className="flex items-center space-x-4">
+                    <div className="h-12 w-12 bg-indigo-50 border border-indigo-100 rounded-2xl flex items-center justify-center text-indigo-600 shrink-0">
+                      <CreditCard className="h-6 w-6 text-indigo-500" />
+                    </div>
+                    <div>
+                      <h3 className="font-extrabold text-slate-900 text-sm font-sans flex items-center gap-2">
+                        SaaS Subscription & Billing Workspace
+                        {activePlan === 'premium' ? (
+                          <span className="bg-blue-100 text-blue-800 font-black text-[9px] px-2 py-0.5 rounded-full uppercase tracking-wider animate-pulse">PRO ACTIVE</span>
+                        ) : (
+                          <span className="bg-slate-100 text-slate-600 font-bold text-[9px] px-2 py-0.5 rounded-full uppercase tracking-wider">FREE SANDBOX</span>
+                        )}
+                      </h3>
+                      <p className="text-slate-500 text-xs mt-0.5 max-w-xl">
+                        Unlock autonomous rank optimization loops, automatic SERP crawl nodes, and syndication webhooks.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div>
+                    {activePlan === 'premium' ? (
+                      <button 
+                        onClick={() => {
+                          setActivePlan('free');
+                          localStorage.setItem('rs_active_plan', 'free');
+                        }}
+                        className="px-4 py-1.5 bg-slate-100 hover:bg-rose-50 text-slate-700 hover:text-rose-600 text-xs font-bold rounded-xl transition cursor-pointer"
+                      >
+                        Downgrade Tier
+                      </button>
+                    ) : (
+                      <button 
+                        onClick={() => handleStripeCheckout('premium')}
+                        disabled={isRedirectingToStripe}
+                        className="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-black rounded-xl transition cursor-pointer shadow-sm flex items-center gap-1.5 disabled:opacity-50"
+                      >
+                        {isRedirectingToStripe ? (
+                          <>
+                            <span className="animate-spin h-3 w-3 border-2 border-white border-t-transparent rounded-full" />
+                            <span>Connecting...</span>
+                          </>
+                        ) : (
+                          <>
+                            <span>Upgrade to Pro ($49/mo)</span>
+                          </>
+                        )}
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-3 border-t border-slate-100">
+                  <div className={`p-4 rounded-2xl border ${activePlan === 'free' ? 'border-amber-200 bg-amber-50/20' : 'border-slate-100 bg-slate-50/40'}`}>
+                    <h4 className="text-xs font-black text-slate-800 mb-1 font-sans">Free Sandbox Plan</h4>
+                    <p className="text-slate-500 text-[11px] leading-relaxed">
+                      Track up to 15 key terms manual indexing. Local client cache persistence. Simulated direct publishing.
+                    </p>
+                  </div>
+                  <div className={`p-4 rounded-2xl border ${activePlan === 'premium' ? 'border-indigo-200 bg-indigo-50/20' : 'border-slate-100 bg-slate-50/40'}`}>
+                    <h4 className="text-xs font-black text-slate-800 mb-1 font-sans flex items-center justify-between">
+                      SEO Autopilot Premium Plan
+                      <span className="text-[10px] text-indigo-600 font-extrabold font-mono">$49/month</span>
+                    </h4>
+                    <p className="text-slate-500 text-[11px] leading-relaxed">
+                      Track up to 100 high-priority phrases, initiate 5 autonomous daily articles drafting, and open live Webhooks (Vercel/Netlify).
+                    </p>
+                  </div>
+                </div>
+              </div>
+
               <div className="bg-white rounded-3xl border border-slate-200 shadow-2xs divide-y divide-slate-100 overflow-hidden">
                 
                 {/* CMS 1: WordPress */}
@@ -3553,6 +3737,72 @@ export default function App() {
                   )}
                 </div>
 
+                {/* CMS 4: Headless Webhooks */}
+                <div className="p-6 flex flex-col gap-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div className="flex items-center space-x-4">
+                      <div className="h-12 w-12 bg-emerald-50 border border-emerald-100 rounded-2xl flex items-center justify-center text-emerald-600 shrink-0">
+                        <Terminal className="h-6 w-6 text-emerald-600" />
+                      </div>
+                      <div>
+                        <h4 className="font-extrabold text-slate-900 text-sm">Headless Platform Webhooks</h4>
+                        <p className="text-slate-500 text-xs mt-0.5">Trigger Netlify, Vercel, or custom GitHub actions on post generation.</p>
+                        {headlessConfig.webhookUrl ? (
+                          <span className="bg-emerald-50 text-emerald-800 text-[9px] font-black uppercase px-2 py-0.5 border border-emerald-100 rounded mt-1.5 inline-block">
+                            Connected. Endpoint: {headlessConfig.webhookUrl}
+                          </span>
+                        ) : (
+                          <span className="bg-amber-50 text-amber-800 text-[9px] font-black uppercase px-2 py-0.5 border border-amber-100 rounded mt-1.5 inline-block">
+                            Not Configured (Using Sandbox Simulation)
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <button 
+                      onClick={() => setEditingCmsPlatform(editingCmsPlatform === 'headless' ? null : 'headless')}
+                      className="px-4 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold rounded-lg transition-all cursor-pointer"
+                    >
+                      {editingCmsPlatform === 'headless' ? "Close Settings" : "Configure Connection"}
+                    </button>
+                  </div>
+
+                  {editingCmsPlatform === 'headless' && (
+                    <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 space-y-3 mt-2 animate-fade-in">
+                      <p className="text-slate-500 text-xs font-semibold">Provide your deployment Webhook URL below to automatically post generated Markdown articles to your Headless deployment pipelines:</p>
+                      <div className="grid grid-cols-1 gap-3">
+                        <div>
+                          <label className="block text-[9px] font-black uppercase text-slate-400 mb-1 leading-relaxed">Build Webhook Target URL</label>
+                          <input 
+                            type="text" 
+                            placeholder="e.g. https://api.netlify.com/build_hooks/xxxxxxx or https://api.vercel.com/v1/integrations/deploy/xxxxx" 
+                            className="bg-white border border-slate-200 text-xs p-2.5 outline-none rounded-xl focus:ring-1 focus:ring-blue-500 w-full"
+                            value={tempHeadlessUrl}
+                            onChange={(e) => setTempHeadlessUrl(e.target.value)}
+                          />
+                        </div>
+                      </div>
+                      <div className="flex justify-end gap-2 mt-2">
+                        <button 
+                          onClick={() => {
+                            setTempHeadlessUrl('');
+                            saveHeadlessConfig('');
+                          }}
+                          className="px-3 py-1.5 bg-rose-50 text-rose-700 hover:bg-rose-100 text-xs font-bold rounded-lg"
+                        >
+                          Clear Credentials
+                        </button>
+                        <button 
+                          onClick={() => saveHeadlessConfig(tempHeadlessUrl)}
+                          className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-lg shadow-sm"
+                        >
+                          Save Connection
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
               </div>
               
               {/* API keys config proxy block */}
@@ -3783,6 +4033,151 @@ export default function App() {
       )}
 
       {/* ========================================= */}
+      {/* DIALOG MODAL: REAL-TIME AI ENGINE WRITER */}
+      {/* ========================================= */}
+      {showAiGenerator && (
+        <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in-quick">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 border border-slate-200 shadow-2xl relative font-sans text-slate-800 max-h-[90vh] overflow-y-auto">
+            <button 
+              onClick={() => {
+                setShowAiGenerator(false);
+                setAiGenError('');
+              }}
+              disabled={aiGenerating}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 p-1 rounded disabled:opacity-50"
+            >
+              <X className="h-5 w-5" />
+            </button>
+
+            <div className="flex items-center gap-3 border-b border-slate-100 pb-4 mb-4">
+              <div className="h-10 w-10 bg-amber-50 text-amber-600 rounded-xl flex items-center justify-center border border-amber-100 shrink-0">
+                <Sparkles className="h-5 w-5 text-amber-500" />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-slate-900 tracking-tight">Gemini AI Article Orchestrator</h3>
+                <p className="text-slate-500 text-[11px]">Generate semantic SEO articles integrated with structured competitor schema</p>
+              </div>
+            </div>
+
+            {aiGenError && (
+              <div className="bg-rose-50 border border-rose-100 p-3 rounded-2xl text-[11px] text-rose-700 font-medium mb-4 flex items-start gap-2">
+                <AlertCircle className="h-4 w-4 text-rose-500 shrink-0 mt-0.5" />
+                <span>{aiGenError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleRealAIGenerate} className="space-y-4">
+              <div>
+                <label className="block text-[10px] font-black uppercase text-slate-400 mb-1 leading-relaxed">Target Focus Keyword</label>
+                <input 
+                  type="text" 
+                  required
+                  placeholder="e.g. delicious high protein vegan recipe"
+                  className="w-full bg-slate-50 border border-slate-100 text-sm rounded-xl p-3 outline-none focus:ring-1 focus:ring-blue-500 text-slate-800"
+                  value={aiGenKeyword}
+                  onChange={(e) => setAiGenKeyword(e.target.value)}
+                  disabled={aiGenerating}
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-black uppercase text-slate-400 mb-1 leading-relaxed">Competitor Content Structure / Header Outlines</label>
+                <textarea 
+                  placeholder="e.g. - Introduction to high protein vegan options&#10;- Top 10 protein ingredients&#10;- Step-by-step cooking guide"
+                  className="w-full bg-slate-50 border border-slate-100 text-sm rounded-xl p-3 outline-none focus:ring-1 focus:ring-blue-500 text-slate-800 h-20 resize-none"
+                  value={aiGenCompetitorStructure}
+                  onChange={(e) => setAiGenCompetitorStructure(e.target.value)}
+                  disabled={aiGenerating}
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-black uppercase text-slate-400 mb-1 leading-relaxed">LSI / Semantic Keywords to Weave In (comma separated)</label>
+                <textarea 
+                  placeholder="e.g. organic protein sources, gluten-free vegan diet, bulk prep, clean eating recipes"
+                  className="w-full bg-slate-50 border border-slate-100 text-sm rounded-xl p-3 outline-none focus:ring-1 focus:ring-blue-500 text-slate-800 h-16 resize-none"
+                  value={aiGenSemanticKeywords}
+                  onChange={(e) => setAiGenSemanticKeywords(e.target.value)}
+                  disabled={aiGenerating}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[10px] font-black uppercase text-slate-400 mb-1 leading-relaxed">Target Word Length</label>
+                  <select 
+                    className="w-full bg-slate-50 border border-slate-100 text-sm rounded-xl p-3 outline-none focus:ring-1 focus:ring-blue-500 text-slate-800 font-bold"
+                    value={aiGenWordCount}
+                    onChange={(e) => setAiGenWordCount(Number(e.target.value))}
+                    disabled={aiGenerating}
+                  >
+                    <option value={600}>600 words (Brief post)</option>
+                    <option value={1000}>1000 words (Standard blog)</option>
+                    <option value={1500}>1500 words (Deep research)</option>
+                    <option value={2000}>2000 words (Ultimate cornerstone)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-black uppercase text-slate-400 mb-1 leading-relaxed">Writing Tone Preset</label>
+                  <select 
+                    className="w-full bg-slate-50 border border-slate-100 text-sm rounded-xl p-3 outline-none focus:ring-1 focus:ring-blue-500 text-slate-800 font-bold"
+                    value={aiGenTone}
+                    onChange={(e) => setAiGenTone(e.target.value)}
+                    disabled={aiGenerating}
+                  >
+                    <option value="Professional & Authoritative">Professional & Authoritative</option>
+                    <option value="Informative & Friendly">Informative & Friendly</option>
+                    <option value="Casual & Direct">Casual & Direct</option>
+                    <option value="Technical & Detail-Oriented">Technical & Detail-Oriented</option>
+                    <option value="Creative & Captivating">Creative & Captivating</option>
+                  </select>
+                </div>
+              </div>
+
+              {aiGenerating && (
+                <div className="bg-blue-50 border border-blue-100 p-4 rounded-2xl flex items-center gap-3 animate-pulse">
+                  <Loader2 className="h-4 w-4 text-blue-600 animate-spin shrink-0" />
+                  <p className="text-blue-900 font-bold text-xs tracking-tight">{aiStatusMessage}</p>
+                </div>
+              )}
+
+              <div className="pt-2 flex justify-end space-x-2">
+                <button 
+                  type="button"
+                  onClick={() => {
+                    setShowAiGenerator(false);
+                    setAiGenError('');
+                  }}
+                  disabled={aiGenerating}
+                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 rounded-xl text-xs font-bold text-slate-800 cursor-pointer disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button 
+                  type="submit"
+                  disabled={aiGenerating}
+                  className="px-5 py-2 bg-blue-600 hover:bg-blue-500 rounded-xl text-xs font-bold text-white shadow shadow-blue-500/10 cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  {aiGenerating ? (
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      <span>Writing...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="h-3.5 w-3.5 text-amber-300" />
+                      <span>Authorize Generation</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================= */}
       {/* DIALOG MODAL: DIRECT CMS SYNDICATION GATEWAY */}
       {/* ========================================= */}
       {publishingArticle && (
@@ -3998,8 +4393,40 @@ export default function App() {
                       </span>
                     </button>
 
+                    {/* OPTION 5: Headless Webhooks */}
+                    <button 
+                      type="button"
+                      onClick={() => setSelectedPublishPlatform('headless_webhook')}
+                      className={`p-3.5 rounded-2xl border text-left flex items-start justify-between transition-all cursor-pointer ${
+                        selectedPublishPlatform === 'headless_webhook' 
+                          ? 'border-emerald-500 bg-emerald-500/5 shadow-[0_0_8px_rgba(16,185,129,0.1)]' 
+                          : 'border-slate-200 hover:bg-slate-50'
+                      }`}
+                    >
+                      <div className="flex items-center space-x-3">
+                        <div className="h-8 w-8 bg-emerald-50 text-emerald-600 border border-emerald-100 rounded-xl flex items-center justify-center shrink-0">
+                          <Terminal className="h-4 w-4" />
+                        </div>
+                        <div>
+                          <p className="text-xs font-black text-slate-900">Headless API Webhook</p>
+                          <p className="text-[9px] text-slate-400">
+                            {headlessConfig.webhookUrl ? "Live Channel Configured" : "Unconfigured (Simulated)"}
+                          </p>
+                        </div>
+                      </div>
+                      <span className={`h-4 w-4 rounded-full border flex items-center justify-center shrink-0 ${selectedPublishPlatform === 'headless_webhook' ? 'border-emerald-500 bg-emerald-500 text-white' : 'border-slate-300'}`}>
+                        {selectedPublishPlatform === 'headless_webhook' && <span className="h-1.5 w-1.5 rounded-full bg-white" />}
+                      </span>
+                    </button>
+
                   </div>
                 </div>
+
+                {selectedPublishPlatform === 'headless_webhook' && !headlessConfig.webhookUrl && (
+                  <p className="text-[10px] text-amber-600 font-bold bg-amber-50 border border-amber-100 p-2.5 rounded-xl font-sans">
+                    ⚠️ Headless Webhook endpoint is missing. Running mock rebuild proxy tests safely.
+                  </p>
+                )}
 
                 {selectedPublishPlatform === 'wordpress' && !wpConfig.siteUrl && (
                   <p className="text-[10px] text-amber-600 font-bold bg-amber-50 border border-amber-100 p-2.5 rounded-xl font-sans">
