@@ -5,6 +5,8 @@ import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import fetch from "node-fetch";
 import Stripe from "stripe";
+import fs from "fs";
+import { kwResearchManager } from "./src/lib/seo/manager";
 
 // Initialize Stripe Client Lazily/Safely
 let stripeClient: any = null;
@@ -397,6 +399,110 @@ app.get("/api/gsc/performance", async (req, res) => {
       isSimulated: true,
       errorOccorred: true,
       errorMessage: err.message
+    });
+  }
+});
+
+// ==========================================
+// REAL KEYWORD RESEARCH ENGINE ENDPOINTS
+// ==========================================
+interface KeywordUsageState {
+  creditsLimit: number;
+  creditsUsed: number;
+}
+
+const usagePath = path.join(process.cwd(), "metadata_usage_tracking.json");
+let kwUsageState: KeywordUsageState = {
+  creditsLimit: 100,
+  creditsUsed: 15
+};
+
+function readUsageState() {
+  try {
+    if (fs.existsSync(usagePath)) {
+      kwUsageState = JSON.parse(fs.readFileSync(usagePath, "utf8"));
+    }
+  } catch (e) {
+    console.warn("[KW USAGE]: Reading quota file failed, using memory default");
+  }
+}
+
+function writeUsageState() {
+  try {
+    fs.writeFileSync(usagePath, JSON.stringify(kwUsageState, null, 2), "utf8");
+  } catch (e) {
+    console.warn("[KW USAGE]: Saving quota file failed");
+  }
+}
+
+readUsageState();
+
+app.get("/api/keywords/usage", (req, res) => {
+  res.json({
+    creditsLimit: kwUsageState.creditsLimit,
+    creditsUsed: kwUsageState.creditsUsed,
+    creditsRemaining: Math.max(0, kwUsageState.creditsLimit - kwUsageState.creditsUsed)
+  });
+});
+
+app.post("/api/keywords/usage/reset", (req, res) => {
+  kwUsageState.creditsUsed = 0;
+  writeUsageState();
+  res.json({
+    message: "Research credits successfully recharged to 100",
+    creditsLimit: kwUsageState.creditsLimit,
+    creditsUsed: kwUsageState.creditsUsed,
+    creditsRemaining: kwUsageState.creditsLimit
+  });
+});
+
+app.post("/api/keywords/research", async (req, res) => {
+  try {
+    const { keyword, country = "US", language = "en", device = "desktop" } = req.body;
+
+    if (!keyword) {
+      return res.status(400).json({ error: "Search term query is required" });
+    }
+
+    // Check usage quota limit
+    const remaining = kwUsageState.creditsLimit - kwUsageState.creditsUsed;
+    if (remaining <= 0) {
+      return res.status(402).json({
+        error: "Keyword research credits exhausted.",
+        creditsLimit: kwUsageState.creditsLimit,
+        creditsUsed: kwUsageState.creditsUsed,
+        creditsRemaining: 0,
+        quotaExceeded: true
+      });
+    }
+
+    // Process research request via core manager orchestrator
+    const result = await kwResearchManager.performResearch({
+      keyword,
+      country,
+      language,
+      device
+    });
+
+    // Accounting - only deduct credits for fresh (non-cached) queries to provide value!
+    if (!result.cached) {
+      kwUsageState.creditsUsed += 1;
+      writeUsageState();
+    }
+
+    return res.json({
+      ...result,
+      quota: {
+        creditsLimit: kwUsageState.creditsLimit,
+        creditsUsed: kwUsageState.creditsUsed,
+        creditsRemaining: Math.max(0, kwUsageState.creditsLimit - kwUsageState.creditsUsed)
+      }
+    });
+
+  } catch (err: any) {
+    console.error("[KEYWORD API ERROR]: Research failed:", err);
+    return res.status(500).json({
+      error: err.message || "Keyword query process aborted on server"
     });
   }
 });

@@ -57,6 +57,7 @@ import OutrankLanding from './components/OutrankLanding';
 import PricingPage from './components/PricingPage';
 import BrandIdentityCenter from './components/BrandIdentityCenter';
 import RankSyncerLogo from './components/RankSyncerLogo';
+import { KeywordResearchSuite } from './components/KeywordResearchSuite';
 
 // Firebase Authentication and Relational Sync Client Integrations
 import { onAuthStateChanged, User } from 'firebase/auth';
@@ -87,6 +88,7 @@ export default function App() {
   // Navigation & Core States
   const [viewMode, setViewMode] = useState<'landing' | 'app' | 'pricing'>('landing');
   const [activeTab, setActiveTab] = useState<'dashboard' | 'projects' | 'keywords' | 'planner' | 'editor' | 'crawler' | 'settings' | 'brand'>('brand');
+  const [keywordsSubTab, setKeywordsSubTab] = useState<'explore' | 'tracker'>('explore');
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     const saved = localStorage.getItem('rs_theme');
     return (saved === 'light' || saved === 'dark') ? saved : 'dark';
@@ -2610,11 +2612,90 @@ export default function App() {
           {/* ========================================= */}
           {activeTab === 'keywords' && currentProject && (() => {
             const selectedKw = projectKeywords.find(k => k.id === selectedKeywordId) || projectKeywords[0];
+            
+            // Collect list of currently tracked keyword terms, to display checkmarks in Search Explorer results if they are already in the database!
+            const trackedTerms = projectKeywords.map(k => k.term.toLowerCase());
+
+            const handleExplorerTrackKeyword = (term: string, volume: number, difficulty: number, intent: string) => {
+              // We construct our tracker model parameters and append to projectKeywords safely
+              const termClean = term.trim().toLowerCase();
+              if (trackedTerms.includes(termClean)) return;
+
+              const newKw: Keyword = {
+                id: `k-${Date.now()}`,
+                projectId: selectedProjectId,
+                term: termClean,
+                volume: volume || 500,
+                difficulty: difficulty || 30,
+                intent: intent || 'Informational',
+                currentRank: 99,
+                previousRank: 99,
+                history: [
+                  { date: '05-14', rank: 99 },
+                  { date: '05-15', rank: 99 },
+                  { date: '05-16', rank: 99 },
+                  { date: '05-17', rank: 99 },
+                  { date: '05-18', rank: 99 },
+                  { date: '05-19', rank: 99 },
+                  { date: '05-20', rank: 99 }
+                ]
+              };
+
+              const bootLog: CrawlerLog = {
+                id: `l-${Date.now()}-kw`,
+                timestamp: new Date().toISOString(),
+                type: 'info',
+                message: `Added organic research target for tracking: "${newKw.term}" (Vol: ${newKw.volume})`,
+                module: 'SERP_CRAWLER'
+              };
+
+              if (currentUser) {
+                fsSaveKeyword(newKw, selectedProjectId, currentUser.uid);
+                fsSaveLog(bootLog, selectedProjectId, currentUser.uid);
+              } else {
+                setKeywords(prev => [...prev, newKw]);
+                setLogs(prev => [bootLog, ...prev]);
+              }
+            };
+
             return (
               <div className="space-y-6">
                 
-                {/* Header Control Card */}
-                <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-2xs flex flex-col md:flex-row md:items-center justify-between gap-4 animate-fade-in">
+                {/* Segmented Subtab Navigation Switcher */}
+                <div className="flex bg-slate-100 p-1 rounded-2xl border border-slate-200/60 max-w-lg mb-2">
+                  <button
+                    onClick={() => setKeywordsSubTab('explore')}
+                    className={`flex-1 py-2 px-4 text-xs font-bold rounded-xl transition-all duration-150 ${
+                      keywordsSubTab === 'explore'
+                        ? 'bg-slate-900 text-white shadow-sm'
+                        : 'text-slate-500 hover:text-slate-900'
+                    }`}
+                  >
+                    🔍 Keyword Search Explorer
+                  </button>
+                  <button
+                    onClick={() => setKeywordsSubTab('tracker')}
+                    className={`flex-1 py-2 px-4 text-xs font-bold rounded-xl transition-all duration-150 ${
+                      keywordsSubTab === 'tracker'
+                        ? 'bg-slate-900 text-white shadow-sm'
+                        : 'text-slate-500 hover:text-slate-900'
+                    }`}
+                  >
+                    📊 Target Rank Tracker ({projectKeywords.length})
+                  </button>
+                </div>
+
+                {keywordsSubTab === 'explore' ? (
+                  <KeywordResearchSuite 
+                    onTrackKeyword={handleExplorerTrackKeyword}
+                    selectedProjectId={selectedProjectId}
+                    projectName={currentProject.name}
+                    trackedKeywordTerms={trackedTerms}
+                  />
+                ) : (
+                  <>
+                    {/* Header Control Card */}
+                    <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-2xs flex flex-col md:flex-row md:items-center justify-between gap-4 animate-fade-in">
                   <div>
                     <h2 className="text-2xl font-black text-slate-900 tracking-tight">Keyword Opportunity Finder</h2>
                     <p className="text-slate-500 text-sm mt-0.5">
@@ -2895,6 +2976,8 @@ export default function App() {
                     </div>
 
                   </div>
+                )}
+                </>
                 )}
 
               </div>
