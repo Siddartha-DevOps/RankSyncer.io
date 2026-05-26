@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Search, TrendUp, Info, HelpCircle, Check, Loader2, Sparkles, RefreshCw, BarChart2, ShieldAlert, Award, FileText, ChevronRight, Hash, Download, Plus, AlertCircle, Globe } from 'lucide-react';
+import { Search, TrendingUp, Info, HelpCircle, Check, Loader2, Sparkles, RefreshCw, BarChart2, ShieldAlert, Award, FileText, ChevronRight, Hash, Download, Plus, AlertCircle, Globe } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import { KeywordResearchResult, SerpRankedPage } from '../lib/seo/types';
 
@@ -390,7 +390,7 @@ export const KeywordResearchSuite: React.FC<KeywordResearchSuiteProps> = ({
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Search Volume</span>
                   <div className="bg-indigo-50 p-2 rounded-xl text-indigo-600">
-                    <TrendUp className="w-4 h-4 text-indigo-600" />
+                    <TrendingUp className="w-4 h-4 text-indigo-600" />
                   </div>
                 </div>
                 <div className="mt-4">

@@ -29,7 +29,8 @@ import {
   Globe2,
   Trash2,
   Edit3,
-  CreditCard
+  CreditCard,
+  Link2
 } from 'lucide-react';
 
 import { Project, Keyword, Article, CrawlerLog, AutopilotQueueItem } from './types';
@@ -53,11 +54,19 @@ import {
 import { evaluateSeoMetrics, parseMarkdownStructure } from './utils/seoAnalyzer';
 import EditorSidebar from './components/EditorSidebar';
 import TopicalClusters from './components/TopicalClusters';
+import AIContentPlanner from './components/AIContentPlanner';
+import AutoPublishScheduler from './components/AutoPublishScheduler';
 import OutrankLanding from './components/OutrankLanding';
 import PricingPage from './components/PricingPage';
 import BrandIdentityCenter from './components/BrandIdentityCenter';
+import EnterpriseBrandVoiceSuite from './components/EnterpriseBrandVoiceSuite';
 import RankSyncerLogo from './components/RankSyncerLogo';
 import { KeywordResearchSuite } from './components/KeywordResearchSuite';
+import BrandedImageManager from './components/BrandedImageManager';
+import { AIContentLinkingSuite } from './components/AIContentLinkingSuite';
+import { YouTubeEmbedManager } from './components/YouTubeEmbedManager';
+import EnterpriseMultilingualSuite from './components/EnterpriseMultilingualSuite';
+
 
 // Firebase Authentication and Relational Sync Client Integrations
 import { onAuthStateChanged, User } from 'firebase/auth';
@@ -126,12 +135,14 @@ export default function App() {
 
   // Editor-scoped state
   const [activeArticleId, setActiveArticleId] = useState<string>('a-3');
+  const [editorSubTab, setEditorSubTab] = useState<'write' | 'images' | 'youtube' | 'multilingual'>('write');
 
   // Planner sub-toggle state
-  const [plannerSubView, setPlannerSubView] = useState<'pipeline' | 'topical'>('pipeline');
+  const [plannerSubView, setPlannerSubView] = useState<'pipeline' | 'topical' | 'aiPlan' | 'autoScheduler'>('pipeline');
 
   // --- Sub-View Sub-Toggles for Dashboard (Overview vs GSC vs Autopilot) ---
   const [dashboardSubView, setDashboardSubView] = useState<'overview' | 'gsc' | 'autopilot'>('overview');
+  const [brandSubTab, setBrandSubTab] = useState<'visuals' | 'voice'>('visuals');
 
   // --- Google Search Console State ---
   const [gscAccount, setGscAccount] = useState<{
@@ -1528,6 +1539,7 @@ export default function App() {
               { id: 'keywords', label: 'Keyword Research', icon: Search },
               { id: 'planner', label: 'Content Planner', icon: FileText },
               { id: 'editor', label: 'SEO Code Writer', icon: Sparkles },
+              { id: 'linker', label: 'Semantic Linker', icon: Link2 },
               { id: 'crawler', label: 'Simulated SERP Logs', icon: Terminal },
               { id: 'settings', label: 'CMS Connected Hub', icon: Settings },
               { id: 'brand', label: 'Brand & Assets', icon: BookOpen }
@@ -3020,6 +3032,26 @@ export default function App() {
                     >
                       Topical Clusters Map
                     </button>
+                    <button
+                      onClick={() => setPlannerSubView('aiPlan')}
+                      className={`text-xs font-bold px-3.5 py-1.5 rounded-lg transition-all cursor-pointer ${
+                        plannerSubView === 'aiPlan' 
+                          ? 'bg-white text-slate-800 shadow-3xs' 
+                          : 'text-slate-500 hover:text-slate-800'
+                      }`}
+                    >
+                      30-Day AI Content Plan 🚀
+                    </button>
+                    <button
+                      onClick={() => setPlannerSubView('autoScheduler')}
+                      className={`text-xs font-bold px-3.5 py-1.5 rounded-lg transition-all cursor-pointer ${
+                        plannerSubView === 'autoScheduler' 
+                          ? 'bg-white text-slate-800 shadow-3xs' 
+                          : 'text-slate-500 hover:text-slate-800'
+                      }`}
+                    >
+                      Auto Publish Scheduler 🤖
+                    </button>
                   </div>
 
                   <button 
@@ -3041,7 +3073,34 @@ export default function App() {
               )}
 
               {/* Sub-view switcher render blocks */}
-              {plannerSubView === 'topical' ? (
+              {plannerSubView === 'aiPlan' ? (
+                <AIContentPlanner 
+                  project={currentProject}
+                  activePlan={activePlan}
+                  onUpgradePrompt={() => {
+                    setActiveTab('settings');
+                    alert('Redirecting to setting page plans to upgrade tier.');
+                  }}
+                  onNavigateToEditor={(articleId) => {
+                    setActiveArticleId(articleId);
+                    setActiveTab('editor');
+                  }}
+                />
+              ) : plannerSubView === 'autoScheduler' ? (
+                <AutoPublishScheduler 
+                  project={currentProject}
+                  onNavigateToEditor={(articleId) => {
+                    setActiveArticleId(articleId);
+                    setActiveTab('editor');
+                  }}
+                  cmsCredentials={{
+                    wp: wpConfig,
+                    webflow: webflowConfig,
+                    shopify: shopifyConfig,
+                    headless: headlessConfig
+                  }}
+                />
+              ) : plannerSubView === 'topical' ? (
                 <TopicalClusters 
                   project={currentProject} 
                   projectKeywords={projectKeywords} 
@@ -3224,13 +3283,49 @@ export default function App() {
                     {/* Header bar controls */}
                     <div className="p-4 bg-slate-50 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3 font-sans">
                       <div>
-                        <span className="text-[10px] font-black tracking-widest text-blue-600 uppercase">Interactive writing dock</span>
+                        <span className="text-[10px] font-black tracking-widest text-[var(--color-blue-600)] uppercase">Interactive writing dock</span>
                         <div className="flex items-center space-x-2">
                           <span className="text-xs text-slate-500">Targeting Keyword:</span>
-                          <strong className="text-xs font-mono text-slate-900 bg-slate-200/60 px-2 py-0.5 rounded">
+                          <strong className="text-xs font-mono text-slate-900 bg-slate-250/60 px-2 py-0.5 rounded">
                             "{editorArticle.targetKeyword}"
                           </strong>
                         </div>
+                      </div>
+
+                      {/* Content editor vs Image generator tabs selector */}
+                      <div className="flex bg-slate-205/60 p-1 bg-slate-200 rounded-xl overflow-x-auto shrink-0 max-w-full">
+                        <button
+                          onClick={() => setEditorSubTab('write')}
+                          className={`px-3 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer shrink-0 ${
+                            editorSubTab === 'write' ? 'bg-white text-slate-900 shadow-3xs' : 'text-slate-500 hover:text-slate-805'
+                          }`}
+                        >
+                          Code Draft
+                        </button>
+                        <button
+                          onClick={() => setEditorSubTab('images')}
+                          className={`px-3 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer shrink-0 ${
+                            editorSubTab === 'images' ? 'bg-white text-slate-900 shadow-3xs' : 'text-slate-500 hover:text-slate-850'
+                          }`}
+                        >
+                          AI Visuals
+                        </button>
+                        <button
+                          onClick={() => setEditorSubTab('youtube')}
+                          className={`px-3 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer shrink-0 ${
+                            editorSubTab === 'youtube' ? 'bg-white text-slate-900 shadow-3xs' : 'text-slate-500 hover:text-slate-850'
+                          }`}
+                        >
+                          YouTube Context
+                        </button>
+                        <button
+                          onClick={() => setEditorSubTab('multilingual')}
+                          className={`px-3 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer shrink-0 ${
+                            editorSubTab === 'multilingual' ? 'bg-white text-slate-900 shadow-3xs' : 'text-slate-500 hover:text-slate-850'
+                          }`}
+                        >
+                          Enterprise Multilingual
+                        </button>
                       </div>
 
                       <div className="flex items-center space-x-2">
@@ -3264,49 +3359,80 @@ export default function App() {
                       </div>
                     </div>
 
-                    {/* Content textareas inputs */}
-                    <div className="p-6 space-y-4 flex-1 flex flex-col">
-                      <div>
-                        <label className="block text-[10px] uppercase font-black tracking-widest text-slate-400 mb-1">Post Main Title Heading</label>
-                        <input 
-                          type="text" 
-                          className="w-full text-slate-900 text-xl font-extrabold pb-2 border-b border-slate-100 outline-none focus:border-blue-500 placeholder:text-slate-350"
-                          value={editorArticle.title}
-                          onChange={(e) => updateArticleField(editorArticle.id, 'title', e.target.value)}
-                          placeholder="Headline goes here..."
+                    {/* Left Column Dynamic Content blocks */}
+                    {editorSubTab === 'images' ? (
+                      <div className="p-6 flex-1 flex flex-col">
+                        <BrandedImageManager 
+                          article={editorArticle}
+                          onUpdateContent={(val) => updateArticleField(editorArticle.id, 'content', val)}
                         />
                       </div>
-
-                      <div>
-                        <label className="block text-[10px] uppercase font-black tracking-widest text-slate-400 mb-1">Meta Description Snippet (Optimal range: 120-160 characters)</label>
-                        <textarea 
-                          className="w-full text-slate-700 text-xs p-3 bg-slate-50 hover:bg-slate-50/50 focus:bg-white rounded-xl border border-slate-100 outline-none focus:ring-1 focus:ring-blue-500"
-                          rows={2}
-                          value={editorArticle.metaDescription}
-                          onChange={(e) => updateArticleField(editorArticle.id, 'metaDescription', e.target.value)}
-                          placeholder="Type or generate meta description..."
+                    ) : editorSubTab === 'youtube' ? (
+                      <div className="p-6 flex-1 flex flex-col">
+                        <YouTubeEmbedManager 
+                          article={editorArticle}
+                          onUpdateContent={(val) => updateArticleField(editorArticle.id, 'content', val)}
+                          theme={theme}
                         />
-                        <div className="flex justify-between mt-1 text-[10px] font-mono text-slate-400 font-bold">
-                          <span>Length: {editorArticle.metaDescription?.length || 0} chars</span>
-                          <span className={
-                            (editorArticle.metaDescription?.length >= 100 && editorArticle.metaDescription?.length <= 160)
-                              ? 'text-emerald-500' : 'text-slate-400'
-                          }>
-                            Range Check
-                          </span>
+                      </div>
+                    ) : editorSubTab === 'multilingual' ? (
+                      <div className="p-6 flex-1 flex flex-col overflow-y-auto">
+                        <EnterpriseMultilingualSuite 
+                          activeArticle={editorArticle}
+                          onTranslationLoaded={(trans) => {
+                            // Automatically load the newly generated cultural adaptation into the editor state
+                            updateArticleField(editorArticle.id, 'title', trans.translated_title);
+                            updateArticleField(editorArticle.id, 'content', trans.translated_content);
+                            updateArticleField(editorArticle.id, 'metaDescription', trans.localized_meta_description);
+                            updateArticleField(editorArticle.id, 'slug', trans.translated_slug);
+                          }}
+                        />
+                      </div>
+                    ) : (
+                      /* Content textareas inputs */
+                      <div className="p-6 space-y-4 flex-1 flex flex-col">
+                        <div>
+                          <label className="block text-[10px] uppercase font-black tracking-widest text-slate-400 mb-1">Post Main Title Heading</label>
+                          <input 
+                            type="text" 
+                            className="w-full text-slate-900 text-xl font-extrabold pb-2 border-b border-slate-100 outline-none focus:border-blue-500 placeholder:text-slate-350"
+                            value={editorArticle.title}
+                            onChange={(e) => updateArticleField(editorArticle.id, 'title', e.target.value)}
+                            placeholder="Headline goes here..."
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-[10px] uppercase font-black tracking-widest text-slate-400 mb-1">Meta Description Snippet (Optimal range: 120-160 characters)</label>
+                          <textarea 
+                            className="w-full text-slate-700 text-xs p-3 bg-slate-50 hover:bg-slate-50/50 focus:bg-white rounded-xl border border-slate-100 outline-none focus:ring-1 focus:ring-blue-500"
+                            rows={2}
+                            value={editorArticle.metaDescription}
+                            onChange={(e) => updateArticleField(editorArticle.id, 'metaDescription', e.target.value)}
+                            placeholder="Type or generate meta description..."
+                          />
+                          <div className="flex justify-between mt-1 text-[10px] font-mono text-slate-400 font-bold">
+                            <span>Length: {editorArticle.metaDescription?.length || 0} chars</span>
+                            <span className={
+                              (editorArticle.metaDescription?.length >= 100 && editorArticle.metaDescription?.length <= 160)
+                                ? 'text-emerald-500' : 'text-slate-400'
+                            }>
+                              Range Check
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="flex-1 flex flex-col">
+                          <label className="block text-[10px] uppercase font-black tracking-widest text-slate-400 mb-1">Markdown Body Content</label>
+                          <textarea 
+                            className="w-full flex-1 min-h-[300px] text-slate-800 text-sm font-mono p-4 bg-slate-50 hover:bg-slate-50/50 focus:bg-white focus:text-slate-950 rounded-2xl border border-slate-150 outline-none focus:ring-1 focus:ring-blue-500 leading-relaxed font-sans"
+                            value={editorArticle.content}
+                            onChange={(e) => updateArticleField(editorArticle.id, 'content', e.target.value)}
+                            placeholder="Write article in standard markdown markup styles..."
+                          />
                         </div>
                       </div>
-
-                      <div className="flex-1 flex flex-col">
-                        <label className="block text-[10px] uppercase font-black tracking-widest text-slate-400 mb-1">Markdown Body Content</label>
-                        <textarea 
-                          className="w-full flex-1 min-h-[300px] text-slate-800 text-sm font-mono p-4 bg-slate-50 hover:bg-slate-50/50 focus:bg-white focus:text-slate-950 rounded-2xl border border-slate-150 outline-none focus:ring-1 focus:ring-blue-500 leading-relaxed font-sans"
-                          value={editorArticle.content}
-                          onChange={(e) => updateArticleField(editorArticle.id, 'content', e.target.value)}
-                          placeholder="Write article in standard markdown markup styles..."
-                        />
-                      </div>
-                    </div>
+                    )}
 
                   </div>
 
@@ -3332,6 +3458,21 @@ export default function App() {
               )}
 
             </div>
+          )}
+
+          {activeTab === 'linker' && currentProject && (
+            <AIContentLinkingSuite
+              projectId={selectedProjectId}
+              projects={projects}
+              articles={articles}
+              activeArticle={editorArticle}
+              onUpdateContent={(val) => {
+                if (editorArticle) {
+                  updateArticleField(editorArticle.id, 'content', val);
+                }
+              }}
+              theme={theme}
+            />
           )}
 
           {/* ========================================= */}
@@ -3928,10 +4069,39 @@ export default function App() {
           {/* TAB: BRAND IDENTITY CENTRE */}
           {/* ========================================= */}
           {activeTab === 'brand' && (
-            <BrandIdentityCenter 
-              currentTheme={theme}
-              onChangeTheme={(t) => setTheme(t)}
-            />
+            <div className="space-y-6">
+              <div className="flex border-b border-slate-800 pb-px">
+                <button
+                  onClick={() => setBrandSubTab('visuals')}
+                  className={`flex items-center gap-2 px-6 py-3 text-sm font-bold font-mono transition-all border-b-2 cursor-pointer ${
+                    brandSubTab === 'visuals'
+                      ? 'border-emerald-500 text-white bg-slate-900/20'
+                      : 'border-transparent text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Layers className="w-4 h-4 text-emerald-400" /> Liquid Logo & Palette System
+                </button>
+                <button
+                  onClick={() => setBrandSubTab('voice')}
+                  className={`flex items-center gap-2 px-6 py-3 text-sm font-bold font-mono transition-all border-b-2 cursor-pointer ${
+                    brandSubTab === 'voice'
+                      ? 'border-emerald-500 text-white bg-slate-900/20'
+                      : 'border-transparent text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Sparkles className="w-4 h-4 text-emerald-400" /> AI Style Learning Engine (Brand Voice)
+                </button>
+              </div>
+
+              {brandSubTab === 'visuals' ? (
+                <BrandIdentityCenter 
+                  currentTheme={theme}
+                  onChangeTheme={(t) => setTheme(t)}
+                />
+              ) : (
+                <EnterpriseBrandVoiceSuite />
+              )}
+            </div>
           )}
 
         </main>

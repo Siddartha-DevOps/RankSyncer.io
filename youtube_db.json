@@ -1,0 +1,113 @@
+{
+  "config": {
+    "auto_embed_enabled": true,
+    "max_embeds_per_article": 2,
+    "min_word_count_per_embed": 800,
+    "moderation_strictness": "high"
+  },
+  "article_videos": [
+    {
+      "id": "embed-seed-1",
+      "article_id": "a-3",
+      "youtube_video_id": "8Y6vS-9zve4",
+      "title": "On-Page SEO Checklist for 2026: Outrank Competitors Instantly",
+      "embed_url": "https://www.youtube.com/embed/8Y6vS-9zve4",
+      "relevance_score": 0.96,
+      "inserted_position": "After H2: Complete SEO Audit Framework",
+      "heading_text": "Complete SEO Audit Framework",
+      "view_count": "154K views",
+      "channel_title": "SEO Authority Pros",
+      "duration": "14:22",
+      "published_at": "2025-11-12T08:00:00Z",
+      "thumbnail_url": "https://images.unsplash.com/photo-1611162617213-7d7a39e9b1d7?auto=format&fit=crop&w=320&h=180&q=80",
+      "created_at": "22026-05-26T20:20:00Z"
+    }
+  ],
+  "youtube_search_cache": [
+    {
+      "query": "seo audit overview",
+      "results": [
+        {
+          "youtube_video_id": "8Y6vS-9zve4",
+          "title": "On-Page SEO Checklist for 2026: Outrank Competitors Instantly",
+          "view_count": "154K views",
+          "channel_title": "SEO Authority Pros",
+          "duration": "14:22",
+          "published_at": "2025-11-12T08:00:00Z",
+          "thumbnail_url": "https://images.unsplash.com/photo-1611162617213-7d7a39e9b1d7?auto=format&fit=crop&w=320&h=180&q=80"
+        },
+        {
+          "youtube_video_id": "d0nKStM67A8",
+          "title": "How to Outrank Big Sites: Step-by-Step Guide",
+          "view_count": "89K views",
+          "channel_title": "Niche Dominators",
+          "duration": "18:45",
+          "published_at": "2025-08-20T14:30:00Z",
+          "thumbnail_url": "https://images.unsplash.com/photo-1460925895917-afdab827c52f?auto=format&fit=crop&w=320&h=180&q=80"
+        }
+      ]
+    },
+    {
+      "query": "topical authority clusters",
+      "results": [
+        {
+          "youtube_video_id": "3ZId-eS-1l8",
+          "title": "Topical Authority Secrets: How I Rank #1 for Hard Keywords",
+          "view_count": "42K views",
+          "channel_title": "Semantic Web SEO",
+          "duration": "12:05",
+          "published_at": "2025-10-05T09:15:00Z",
+          "thumbnail_url": "https://images.unsplash.com/photo-1551288049-bebda4e38f71?auto=format&fit=crop&w=320&h=180&q=80"
+        }
+      ]
+    },
+    {
+      "query": "google search console setup instructions",
+      "results": [
+        {
+          "youtube_video_id": "COlh7M_S89A",
+          "title": "Setup Google Search Console: A Fast Step-by-Step Walkthrough",
+          "view_count": "112K views",
+          "channel_title": "Tech Marketer HQ",
+          "duration": "8:30",
+          "published_at": "2025-05-18T11:00:00Z",
+          "thumbnail_url": "https://images.unsplash.com/photo-1434030216411-0b793f4b4173?auto=format&fit=crop&w=320&h=180&q=80"
+        }
+      ]
+    },
+    {
+      "query": "link building strategy",
+      "results": [
+        {
+          "youtube_video_id": "Xg3n8YvFpGs",
+          "title": "White Hat Link Building Strategy: 10x Your Authority Graph",
+          "view_count": "230K views",
+          "channel_title": "Backlink Gurus",
+          "duration": "22:15",
+          "published_at": "2025-01-10T12:00:00Z",
+          "thumbnail_url": "https://images.unsplash.com/photo-1563986768609-322da13575f3?auto=format&fit=crop&w=320&h=180&q=80"
+        }
+      ]
+    }
+  ],
+  "video_embed_logs": [
+    {
+      "id": "log-seed-1",
+      "timestamp": "12:15:10 PM",
+      "type": "success",
+      "message": "Initialized Auto YouTube Embed pipeline. Evaluated active article with 1,450 words."
+    },
+    {
+      "id": "log-seed-2",
+      "timestamp": "12:15:12 PM",
+      "type": "info",
+      "message": "Formulated contextual queries: 'seo audit overview', 'topical authority clusters'"
+    },
+    {
+      "id": "log-seed-3",
+      "timestamp": "12:15:14 PM",
+      "type": "success",
+      "message": "Embedded 'On-Page SEO Checklist for 2026' video contextually under heading: 'Complete SEO Audit Framework' with relevance score of 96%."
+    }
+  ]
+}

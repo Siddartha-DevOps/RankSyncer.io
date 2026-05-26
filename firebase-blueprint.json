@@ -70,6 +70,65 @@
         "projectId": { "type": "string" }
       },
       "required": ["id", "timestamp", "type", "message", "ownerId"]
+    },
+    "ContentPlan": {
+      "title": "ContentPlan",
+      "description": "30-Day automated AI Content Plan master",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "projectId": { "type": "string" },
+        "ownerId": { "type": "string" },
+        "websiteUrl": { "type": "string" },
+        "niche": { "type": "string" },
+        "targetKeywords": { "type": "array" },
+        "targetCountry": { "type": "string" },
+        "targetAudience": { "type": "string" },
+        "days": { "type": "integer" },
+        "status": { "type": "string", "enum": ["pending", "generating", "completed", "failed"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "tokenCount": { "type": "integer" }
+      },
+      "required": ["id", "projectId", "ownerId", "websiteUrl", "niche", "days", "status"]
+    },
+    "ContentPlanItem": {
+      "title": "ContentPlanItem",
+      "description": "An article idea/topic on a specific day of a Content Plan",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "planId": { "type": "string" },
+        "projectId": { "type": "string" },
+        "day": { "type": "integer" },
+        "title": { "type": "string" },
+        "targetKeyword": { "type": "string" },
+        "searchIntent": { "type": "string" },
+        "estimatedTraffic": { "type": "integer" },
+        "articleType": { "type": "string" },
+        "publishingCadence": { "type": "string" },
+        "status": { "type": "string", "enum": ["planned", "generated", "published"] },
+        "approved": { "type": "boolean" },
+        "draftArticleId": { "type": "string" }
+      },
+      "required": ["id", "planId", "projectId", "day", "title", "targetKeyword", "status", "approved"]
+    },
+    "ContentPlanGeneration": {
+      "title": "ContentPlanGeneration",
+      "description": "Generation transaction and logger details",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "planId": { "type": "string" },
+        "projectId": { "type": "string" },
+        "ownerId": { "type": "string" },
+        "status": { "type": "string", "enum": ["queued", "processing", "completed", "failed"] },
+        "error": { "type": "string" },
+        "retryCount": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "planId", "projectId", "ownerId", "status", "retryCount"]
     }
   },
   "firestore": {
@@ -88,6 +147,18 @@
     "/projects/{projectId}/logs/{logId}": {
       "schema": "CrawlerLog",
       "description": "System diagnostic and crawling telemetry history logs"
+    },
+    "/projects/{projectId}/content_plans/{planId}": {
+      "schema": "ContentPlan",
+      "description": "30-Day automated AI Content Plans"
+    },
+    "/projects/{projectId}/content_plans/{planId}/items/{itemId}": {
+      "schema": "ContentPlanItem",
+      "description": "One article topic per day inside of a Content Plan"
+    },
+    "/projects/{projectId}/content_plans/{planId}/generations/{generationId}": {
+      "schema": "ContentPlanGeneration",
+      "description": "Database track for asynchronous job queueing"
     }
   }
 }

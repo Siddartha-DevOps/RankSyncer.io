@@ -148,6 +148,92 @@ service cloud.firestore {
 
         allow delete: if isSignedIn() && isProjectOwner(projectId);
       }
+
+      // 5. CONTENT PLAN VALIDATION & ACCESS
+      function isValidContentPlan(data) {
+        return data.keys().hasAll(['id', 'projectId', 'websiteUrl', 'niche', 'days', 'status', 'ownerId'])
+          && data.id is string && data.id.size() <= 128
+          && data.projectId == projectId
+          && data.websiteUrl is string && data.websiteUrl.size() <= 300
+          && data.niche is string && data.niche.size() <= 500
+          && data.days is int
+          && data.status in ['pending', 'generating', 'completed', 'failed']
+          && data.ownerId == request.auth.uid;
+      }
+
+      match /content_plans/{planId} {
+        allow get: if isSignedIn() && isProjectOwner(projectId);
+        allow list: if isSignedIn() && isProjectOwner(projectId);
+
+        allow create: if isSignedIn()
+          && isValidId(planId)
+          && isProjectOwner(projectId)
+          && isValidContentPlan(request.resource.data)
+          && request.resource.data.id == planId;
+
+        allow update: if isSignedIn()
+          && isProjectOwner(projectId)
+          && isValidContentPlan(request.resource.data)
+          && request.resource.data.ownerId == resource.data.ownerId;
+
+        allow delete: if isSignedIn() && isProjectOwner(projectId);
+
+        // Nested Items inside of content plan
+        function isValidContentPlanItem(data) {
+          return data.keys().hasAll(['id', 'planId', 'projectId', 'day', 'title', 'targetKeyword', 'status', 'approved'])
+            && data.id is string && data.id.size() <= 128
+            && data.planId == planId
+            && data.projectId == projectId
+            && data.day is int
+            && data.title is string && data.title.size() <= 300
+            && data.targetKeyword is string && data.targetKeyword.size() <= 300
+            && data.status in ['planned', 'generated', 'published']
+            && data.approved is bool;
+        }
+
+        match /items/{itemId} {
+          allow get, list: if isSignedIn() && isProjectOwner(projectId);
+          
+          allow create: if isSignedIn()
+            && isValidId(itemId)
+            && isProjectOwner(projectId)
+            && isValidContentPlanItem(request.resource.data)
+            && request.resource.data.id == itemId;
+
+          allow update: if isSignedIn()
+            && isProjectOwner(projectId)
+            && isValidContentPlanItem(request.resource.data);
+
+          allow delete: if isSignedIn() && isProjectOwner(projectId);
+        }
+
+        // Nested generations inside of content plan
+        function isValidContentPlanGen(data) {
+          return data.keys().hasAll(['id', 'planId', 'projectId', 'ownerId', 'status', 'retryCount'])
+            && data.id is string && data.id.size() <= 128
+            && data.planId == planId
+            && data.projectId == projectId
+            && data.ownerId == request.auth.uid
+            && data.status in ['queued', 'processing', 'completed', 'failed']
+            && data.retryCount is int;
+        }
+
+        match /generations/{generationId} {
+          allow get, list: if isSignedIn() && isProjectOwner(projectId);
+          
+          allow create: if isSignedIn()
+            && isValidId(generationId)
+            && isProjectOwner(projectId)
+            && isValidContentPlanGen(request.resource.data)
+            && request.resource.data.id == generationId;
+
+          allow update: if isSignedIn()
+            && isProjectOwner(projectId)
+            && isValidContentPlanGen(request.resource.data);
+
+          allow delete: if isSignedIn() && isProjectOwner(projectId);
+        }
+      }
     }
   }
 }

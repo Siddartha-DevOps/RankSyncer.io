@@ -129,7 +129,7 @@ export default function PricingPage({ onBackToLanding, onLaunchApp, projectsCoun
           </p>
 
           {/* Social proof overlays: Elegant placeholders representing "future slots/connected sites" */}
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-3">
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-4 pt-3">
             <div className="flex items-center -space-x-2">
               {/* Active starter spot */}
               <div className="h-8 w-8 rounded-full bg-gradient-to-tr from-indigo-505 from-indigo-500 to-indigo-650 to-indigo-600 border-2 border-white flex items-center justify-center text-white text-[9px] font-black shadow-xs" title="Connected Domain #1">
@@ -149,6 +149,24 @@ export default function PricingPage({ onBackToLanding, onLaunchApp, projectsCoun
                 +
               </div>
             </div>
+
+            <div className="h-3 w-px bg-slate-200 hidden sm:block" />
+
+            {/* Empty Future User Avatars 1 to 5 placeholders stack */}
+            <div className="flex items-center space-x-1">
+              <div className="flex items-center -space-x-1.5 mr-1" title="Future Early Adopters Slot Placeholder List">
+                {[1, 2, 3, 4, 5].map((idx) => (
+                  <div 
+                    key={idx} 
+                    className="h-6 w-6 rounded-full border-2 border-white bg-slate-100/90 text-slate-400 flex items-center justify-center text-[7.5px] font-mono font-black shadow-4xs"
+                    title={`Future early adopter User ${idx} placeholder slot`}
+                  >
+                    U{idx}
+                  </div>
+                ))}
+              </div>
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-tight">Future Adopters Spot</span>
+            </div>
             
             <div className="h-3 w-px bg-slate-200 hidden sm:block" />
 
@@ -165,9 +183,9 @@ export default function PricingPage({ onBackToLanding, onLaunchApp, projectsCoun
           </div>
         </div>
 
-        {/* CORE PRICING BOARD CARD (Zoomed and tightly packed) */}
-        <section className="max-w-5xl mx-auto px-4 mb-10 transform scale-[1.01] sm:scale-[1.02] hover:scale-[1.03] transition-transform duration-500">
-          <div className="relative rounded-[28px] p-5 sm:py-8 sm:px-9 border-2 border-indigo-200 bg-white shadow-[0_15px_45px_rgba(99,102,241,0.08)]">
+        {/* CORE PRICING BOARD CARD (Zoomed and tightly packed closer to heading) */}
+        <section className="max-w-4xl mx-auto px-4 mb-8 transform scale-[1.05] sm:scale-[1.07] hover:scale-[1.09] transition-all duration-500 origin-center">
+          <div className="relative rounded-[28px] p-5 sm:py-6 sm:px-7 border-2 border-indigo-205 border-indigo-300 bg-white shadow-[0_20px_50px_rgba(99,102,241,0.11)]">
             
             {/* Glowing card border tag */}
             <div className="absolute -top-3.5 left-1/2 -translate-x-1/2 bg-indigo-600 text-white text-[9px] font-black tracking-wider px-4 py-1 rounded-full shadow-lg uppercase">
@@ -308,40 +326,40 @@ export default function PricingPage({ onBackToLanding, onLaunchApp, projectsCoun
         </section>
 
         {/* FAQ WORKSPACE (pricing FAQ section toggles: expand/collapse) */}
-        <section className="max-w-3xl mx-auto px-4 mb-14">
-          <div className="text-center mb-6 space-y-1">
-            <h3 className="text-lg md:text-xl font-sans font-extrabold tracking-tight text-slate-950">
+        <section className="max-w-2xl mx-auto px-4 mb-10 pt-4">
+          <div className="text-center mb-5 space-y-0.5">
+            <h3 className="text-sm md:text-base font-sans font-extrabold tracking-tight text-slate-900">
               Have Questions?
             </h3>
-            <p className="text-slate-500 text-[11px] sm:text-xs font-semibold">
+            <p className="text-slate-450 text-[10px] sm:text-[11px] font-medium">
               If you can't find what you're looking for, feel free to reach out!
             </p>
           </div>
 
-          <div className="space-y-2.5">
+          <div className="space-y-2">
             {faqs.map((faq, i) => (
               <div 
                 key={i}
-                className="bg-white border border-slate-200 shadow-3xs rounded-xl overflow-hidden transition-all duration-300"
+                className="bg-white border border-slate-150-200/80 shadow-4xs rounded-lg overflow-hidden transition-all duration-300"
               >
                 <button 
                   onClick={() => toggleFaq(i)}
-                  className="w-full py-3.5 px-4.5 flex items-center justify-between text-left cursor-pointer hover:bg-slate-50/40 transition-colors"
+                  className="w-full py-2 px-3 flex items-center justify-between text-left cursor-pointer hover:bg-slate-50/40 transition-colors"
                 >
-                  <span className="text-xs font-bold text-slate-850 pr-4">
+                  <span className="text-[11px] font-bold text-slate-800 pr-4 leading-tight">
                     {faq.question}
                   </span>
-                  <span className="flex items-center justify-center h-6 w-6 rounded-full bg-slate-100 text-slate-500 hover:bg-indigo-50 hover:text-indigo-600 shrink-0 transition-colors">
+                  <span className="flex items-center justify-center h-5 w-5 rounded-full bg-slate-100 text-slate-505 text-slate-500 hover:bg-indigo-50 hover:text-indigo-600 shrink-0 transition-all">
                     {faqOpen[i] ? (
-                      <Minus className="h-3 w-3" />
+                      <Minus className="h-2.5 w-2.5" />
                     ) : (
-                      <Plus className="h-3 w-3" />
+                      <Plus className="h-2.5 w-2.5" />
                     )}
                   </span>
                 </button>
 
                 {faqOpen[i] && (
-                  <div className="px-4.5 pb-3.5 pt-1 text-[11px] text-slate-500 font-medium leading-relaxed border-t border-slate-50 animate-fade-in">
+                  <div className="px-3 pb-2.5 pt-0.5 text-[10px] text-slate-500 font-medium leading-relaxed border-t border-slate-50 animate-fade-in">
                     {faq.answer}
                   </div>
                 )}
@@ -391,27 +409,29 @@ export default function PricingPage({ onBackToLanding, onLaunchApp, projectsCoun
                 </button>
                             {/* Simulated/Mock Real-Time OG Image Card of RankSyncer with logo */}
               {/* Size modified: Reduced vertical size, expanded horizontal size for a wider cinematic landscape aspect ratio */}
-              <div className="pt-6 w-full max-w-xl sm:max-w-2xl mx-auto">
-                <div className="bg-slate-950 rounded-2xl border border-indigo-500/15 p-4 text-left shadow-2xl select-none transform hover:scale-[1.01] transition-transform duration-350">
-                  <div className="flex items-center justify-between border-b border-indigo-950 pb-2 mb-3">
+              {/* Simulated/Mock Real-Time OG Image Card of RankSyncer with logo */}
+              {/* Size modified: Flipped to high landscape by expanding width and flat compression */}
+              <div className="pt-6 w-full max-w-2xl sm:max-w-3xl lg:max-w-4xl mx-auto shadow-sm">
+                <div className="bg-slate-950 rounded-2xl border border-indigo-500/15 p-3 py-2 text-left shadow-2xl select-none transform hover:scale-[1.01] transition-transform duration-350">
+                  <div className="flex items-center justify-between border-b border-indigo-950 pb-1.5 mb-2">
                     <RankSyncerLogo theme="dark" />
-                    <span className="text-[8px] font-bold text-indigo-400 font-mono tracking-widest uppercase">RankSyncer Live Optimizer OG Link Preset</span>
+                    <span className="text-[7.5px] font-bold text-indigo-400 font-mono tracking-widest uppercase">RankSyncer Live Optimizer Cinematic OG Preset</span>
                   </div>
                   
                   {/* Mock dashboard screenshot display - compressed height style to look landscape */}
-                  <div className="bg-[#040a0c] rounded-xl border border-slate-850 p-3 h-20 overflow-hidden flex flex-col justify-between">
+                  <div className="bg-[#040a0c] rounded-xl border border-slate-850 p-2 py-1.5 h-14 overflow-hidden flex flex-col justify-between">
                     <div className="flex items-center justify-between">
-                      <div className="space-y-0.5">
-                        <div className="h-2 w-28 bg-slate-800 rounded animate-pulse" />
-                        <div className="h-1 text-[7px] text-slate-500 font-bold opacity-60">Connected Channel Status Live</div>
+                      <div className="space-y-0 flex items-center gap-2">
+                        <div className="h-1.5 w-24 bg-slate-800 rounded animate-pulse" />
+                        <span className="text-[6.5px] text-slate-500 font-mono uppercase opacity-50">NODE DIRECT</span>
                       </div>
-                      <span className="px-1.5 py-0.5 bg-indigo-500/15 text-indigo-400 font-extrabold text-[7px] rounded flex items-center justify-center font-mono uppercase">
+                      <span className="px-1.5 py-0.5 bg-indigo-500/15 text-indigo-400 font-black text-[6.5px] rounded flex items-center justify-center font-mono uppercase">
                         SEO AUTOPILOT ACTIVE
                       </span>
                     </div>
 
                     {/* Chart preview in grid */}
-                    <div className="flex items-end gap-1.5 h-6 pt-1">
+                    <div className="flex items-end gap-1.5 h-4.5 pt-0.5">
                       <div className="h-[20%] w-full bg-indigo-950 rounded-xs" />
                       <div className="h-[35%] w-full bg-indigo-900 rounded-xs" />
                       <div className="h-[55%] w-full bg-indigo-800 rounded-xs" />
@@ -422,13 +442,13 @@ export default function PricingPage({ onBackToLanding, onLaunchApp, projectsCoun
                       <div className="h-[100%] w-full bg-emerald-500 rounded-xs animate-pulse" />
                     </div>
 
-                    <div className="flex justify-between items-center text-[7px] text-slate-500 font-mono">
+                    <div className="flex justify-between items-center text-[6px] text-slate-500 font-mono">
                       <span>PROJECT INDEX ACTIVE</span>
                       <span className="text-emerald-400 font-bold">100% HEALTH SYNCED</span>
                     </div>
                   </div>
 
-                  <p className="text-[10px] text-slate-400 mt-2.5 leading-relaxed font-bold font-sans">
+                  <p className="text-[9.5px] text-slate-400 mt-1.5 leading-relaxed font-bold font-sans">
                     Autonomous platform syncing SERP metrics direct to Webflow, Shopify & WordPress.
                   </p>
                 </div>
