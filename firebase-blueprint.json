@@ -15,6 +15,9 @@
         "crawlStatus": { "type": "string", "enum": ["STALE", "CRAWLING", "COMPLETED", "FAILED"] },
         "lastCrawledAt": { "type": "string", "format": "date-time" },
         "crawlHistory": { "type": "array" },
+        "niche": { "type": "string" },
+        "country": { "type": "string" },
+        "language": { "type": "string" },
         "ownerId": { "type": "string" }
       },
       "required": ["id", "name", "domain", "ownerId"]
@@ -129,6 +132,77 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "planId", "projectId", "ownerId", "status", "retryCount"]
+    },
+    "KeywordDiscovery": {
+      "title": "KeywordDiscovery",
+      "description": "An AI-discovered keyword opportunity with metrics and topical reasoning",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "projectId": { "type": "string" },
+        "keyword": { "type": "string" },
+        "intent": { "type": "string" },
+        "volume": { "type": "integer" },
+        "difficulty": { "type": "integer" },
+        "cpc": { "type": "number" },
+        "cluster": { "type": "string" },
+        "opportunityScore": { "type": "integer" },
+        "reasoning": { "type": "string" },
+        "suggestedTitle": { "type": "string" },
+        "generatedBy": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "ownerId": { "type": "string" }
+      },
+      "required": ["id", "projectId", "keyword", "ownerId"]
+    },
+    "KeywordCluster": {
+      "title": "KeywordCluster",
+      "description": "A group of semantically clustered keyword terms",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "projectId": { "type": "string" },
+        "clusterName": { "type": "string" },
+        "primaryKeyword": { "type": "string" },
+        "supportingKeywords": { "type": "array" },
+        "clusterDifficulty": { "type": "integer" },
+        "contentOpportunityScore": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "ownerId": { "type": "string" }
+      },
+      "required": ["id", "projectId", "clusterName", "ownerId"]
+    },
+    "KeywordGenerationLog": {
+      "title": "KeywordGenerationLog",
+      "description": "Background execution logs for discovery queue tracking",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "projectId": { "type": "string" },
+        "status": { "type": "string", "enum": ["queued", "processing", "completed", "failed"] },
+        "totalKeywords": { "type": "integer" },
+        "niche": { "type": "string" },
+        "error": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "ownerId": { "type": "string" }
+      },
+      "required": ["id", "projectId", "status", "ownerId"]
+    },
+    "KeywordCache": {
+      "title": "KeywordCache",
+      "description": "Cached repeated keyword opportunity generations",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "projectId": { "type": "string" },
+        "domain": { "type": "string" },
+        "niche": { "type": "string" },
+        "rawResultJson": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "ownerId": { "type": "string" }
+      },
+      "required": ["id", "projectId", "domain", "ownerId"]
     }
   },
   "firestore": {
@@ -159,6 +233,22 @@
     "/projects/{projectId}/content_plans/{planId}/generations/{generationId}": {
       "schema": "ContentPlanGeneration",
       "description": "Database track for asynchronous job queueing"
+    },
+    "/projects/{projectId}/keyword_discoveries/{discoveryId}": {
+      "schema": "KeywordDiscovery",
+      "description": "AI discovered keyword lists"
+    },
+    "/projects/{projectId}/keyword_clusters/{clusterId}": {
+      "schema": "KeywordCluster",
+      "description": "Semantically-grouped clusters of target keyword parameters"
+    },
+    "/projects/{projectId}/keyword_generation_logs/{logId}": {
+      "schema": "KeywordGenerationLog",
+      "description": "System status tracking log during background queue triggers"
+    },
+    "/projects/{projectId}/keyword_cache/{cacheId}": {
+      "schema": "KeywordCache",
+      "description": "Local cached results for repeated niche opportunity research requests"
     }
   }
 }

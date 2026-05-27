@@ -13,6 +13,9 @@ export interface Project {
   gscClicks30d?: number;
   gscImpressions30d?: number;
   gscCtr30d?: number;
+  niche?: string;
+  country?: string;
+  language?: string;
 }
 
 export interface Keyword {
@@ -214,5 +217,87 @@ export interface ProjectVoiceAssignment {
   activeVoiceId: string | null;
   styleLockActive: boolean;
 }
+
+// ==========================================
+// ENTERPRISE AI REWRITE ENGINE TYPES
+// ==========================================
+
+export interface ArticleRewrite {
+  id: string;
+  original_article_id: string;
+  rewrite_type: string; // e.g. 'full_article', 'paragraph_level', 'headline', 'seo_rewrite', 'anti_duplicate'
+  rewritten_content: string;
+  similarity_score: number; // 0 - 100
+  readability_score: number; // 0 - 100
+  seo_score: number; // 0 - 100
+  ai_detection_score: number; // 0 - 100 (percentage of AI pattern reduction / humanization quality)
+  rewrite_intensity: number; // 0 - 100
+  token_usage: number;
+  processing_time: number; // ms
+  created_at: string;
+}
+
+export interface RewriteVersion {
+  id: string;
+  article_id: string;
+  title: string;
+  content: string;
+  meta_description: string;
+  version_number: number;
+  rewrite_type: string;
+  change_description: string;
+  similarity_score: number;
+  readability_score: number;
+  seo_score: number;
+  ai_detection_score: number;
+  created_at: string;
+}
+
+export interface RewriteLog {
+  id: string;
+  article_id: string;
+  action: string;
+  status: 'info' | 'success' | 'warn' | 'error';
+  message: string;
+  token_usage: number;
+  processing_time: number;
+  timestamp: string;
+}
+
+export interface RewriteJob {
+  id: string;
+  article_id: string;
+  rewrite_type: string;
+  status: 'pending' | 'processing' | 'completed' | 'failed';
+  error?: string;
+  progress: number;
+  intensity: number;
+  ai_slider: number;
+  rewritten_result?: {
+    title?: string;
+    content?: string;
+    meta_description?: string;
+    scores?: {
+      similarity: number;
+      readability: number;
+      seo: number;
+      ai_detection: number;
+    };
+    token_usage: number;
+    processing_time: number;
+  };
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RewriteDiff {
+  id: string;
+  article_id: string;
+  version_a_id: string;
+  version_b_id: string;
+  diff_summary: string;
+  created_at: string;
+}
+
 
 

@@ -5,11 +5,17 @@ import { dataForSeoProvider } from './providers/dataForSeo';
 import { grepwordsProvider } from './providers/grepwords';
 import { serpApiProvider } from './providers/serpApi';
 import { valueSerpProvider } from './providers/valueSerp';
+import { ahrefsProvider } from './providers/ahrefs';
+import { semrushProvider } from './providers/semrush';
+import { googleAdsProvider } from './providers/googleAds';
 import { kwCacheManager } from './cache';
 import { GoogleGenAI, Type } from '@google/genai';
 
 export class KeywordResearchManager {
   private providers = [
+    ahrefsProvider,
+    semrushProvider,
+    googleAdsProvider,
     keywordsEverywhereProvider,
     dataForSeoProvider,
     grepwordsProvider,
@@ -225,7 +231,18 @@ export class KeywordResearchManager {
       }
     }
 
-    // 6. Save in Cache
+    // 6. Calculate custom Proprietary Opportunity Score (0-100)
+    // Formula balances Search Volume, low SEO Difficulty, CPC commercial value, and content gap indicators
+    const volScore = Math.min(100, Math.max(10, Math.log10(finalResult.searchVolume || 1) * 20));
+    const diffFactor = (100 - finalResult.keywordDifficulty) / 100;
+    const compFactor = 0.5 + (finalResult.competition * 0.5);
+    const cpcFactor = finalResult.cpc > 0 ? Math.min(1.4, 1 + (finalResult.cpc / 10)) : 1.0;
+    
+    // Final score out of 100
+    const rawOppScore = Math.round(volScore * diffFactor * compFactor * cpcFactor);
+    finalResult.opportunityScore = Math.max(5, Math.min(99, rawOppScore));
+
+    // 7. Save in Cache
     kwCacheManager.set(finalResult);
 
     return finalResult;

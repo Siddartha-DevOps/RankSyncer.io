@@ -60,6 +60,7 @@ export interface KeywordResearchResult {
   questions: RelatedKeywordItem[];
   serpResults: SerpRankedPage[];
   aiInsights?: AiInsights;
+  opportunityScore?: number;
   timestamp: string;
   providerUsed: string;
   cached?: boolean;
@@ -70,3 +71,67 @@ export interface UsageQuota {
   creditsUsed: number;
   creditsRemaining: number;
 }
+
+export interface DiscoveredKeyword {
+  id: string;
+  projectId: string;
+  keyword: string;
+  term: string;
+  intent: SearchIntent;
+  volume: number;
+  difficulty: number;
+  cpc: number;
+  cluster: string;
+  opportunityScore: number;
+  reasoning: string;
+  suggestedTitle: string;
+  createdAt: string;
+  ownerId: string;
+  generatedBy?: string;
+  suggestedArticleType?: string;
+  contentAngle?: string;
+  serpCompetition?: 'Low' | 'Medium' | 'High';
+  topicalRelevance?: number;
+  keywordType?: string;
+  sourceType?: string;
+}
+
+export interface TopicCluster {
+  id: string;
+  projectId: string;
+  clusterName: string;
+  primaryKeyword: string;
+  supportingKeywords: string[];
+  clusterDifficulty: number;
+  contentOpportunityScore: number;
+  createdAt: string;
+  ownerId: string;
+}
+
+export interface DiscoveryJob {
+  id: string;
+  projectId: string;
+  status: 'queued' | 'processing' | 'completed' | 'failed';
+  totalKeywords: number;
+  niche: string;
+  country: string;
+  language: string;
+  error?: string;
+  createdAt: string;
+  updatedAt: string;
+  ownerId: string;
+  sourceType?: string;
+  sourceValue?: string;
+  selectedKeywordTypes?: string[];
+}
+
+export interface KeywordCacheItem {
+  id: string;
+  projectId: string;
+  domain: string;
+  niche: string;
+  rawResultJson: string; // Serialized generated response
+  createdAt: string;
+  ownerId: string;
+}
+

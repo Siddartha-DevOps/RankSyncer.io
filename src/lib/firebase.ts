@@ -20,6 +20,7 @@ import {
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { Project, Keyword, Article, CrawlerLog } from '../types';
+import { DiscoveredKeyword, TopicCluster, DiscoveryJob } from './seo/types';
 
 // Initialize Firebase App
 const app = initializeApp(firebaseConfig);
@@ -296,3 +297,80 @@ export async function fsDeleteLog(projectId: string, logId: string) {
     handleFirestoreError(error, OperationType.DELETE, path);
   }
 }
+
+// -------------------------------------------------------------
+// AI DISCOVERY & TOPICAL CLUSTERS SNAPSHOT SUBSCRIBERS
+// -------------------------------------------------------------
+
+export function subscribeToKeywordDiscoveries(
+  projectId: string,
+  onUpdate: (discoveries: DiscoveredKeyword[]) => void,
+  onError: (error: Error) => void
+) {
+  const collectionPath = `projects/${projectId}/keyword_discoveries`;
+  const q = collection(db, collectionPath);
+
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const list: DiscoveredKeyword[] = [];
+      snapshot.forEach((doc) => {
+        list.push(doc.data() as DiscoveredKeyword);
+      });
+      onUpdate(list);
+    },
+    (error) => {
+      handleFirestoreError(error, OperationType.LIST, collectionPath);
+      onError(error as Error);
+    }
+  );
+}
+
+export function subscribeToKeywordClusters(
+  projectId: string,
+  onUpdate: (clusters: TopicCluster[]) => void,
+  onError: (error: Error) => void
+) {
+  const collectionPath = `projects/${projectId}/keyword_clusters`;
+  const q = collection(db, collectionPath);
+
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const list: TopicCluster[] = [];
+      snapshot.forEach((doc) => {
+        list.push(doc.data() as TopicCluster);
+      });
+      onUpdate(list);
+    },
+    (error) => {
+      handleFirestoreError(error, OperationType.LIST, collectionPath);
+      onError(error as Error);
+    }
+  );
+}
+
+export function subscribeToKeywordGenerationLogs(
+  projectId: string,
+  onUpdate: (logs: DiscoveryJob[]) => void,
+  onError: (error: Error) => void
+) {
+  const collectionPath = `projects/${projectId}/keyword_generation_logs`;
+  const q = collection(db, collectionPath);
+
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const list: DiscoveryJob[] = [];
+      snapshot.forEach((doc) => {
+        list.push(doc.data() as DiscoveryJob);
+      });
+      onUpdate(list);
+    },
+    (error) => {
+      handleFirestoreError(error, OperationType.LIST, collectionPath);
+      onError(error as Error);
+    }
+  );
+}
+

@@ -30,7 +30,8 @@ import {
   Trash2,
   Edit3,
   CreditCard,
-  Link2
+  Link2,
+  Radio
 } from 'lucide-react';
 
 import { Project, Keyword, Article, CrawlerLog, AutopilotQueueItem } from './types';
@@ -66,6 +67,9 @@ import BrandedImageManager from './components/BrandedImageManager';
 import { AIContentLinkingSuite } from './components/AIContentLinkingSuite';
 import { YouTubeEmbedManager } from './components/YouTubeEmbedManager';
 import EnterpriseMultilingualSuite from './components/EnterpriseMultilingualSuite';
+import EnterpriseAIRewriteSuite from './components/EnterpriseAIRewriteSuite';
+import WatermarkSuite from './components/WatermarkSuite';
+import { GhostCmsIntegration } from './components/GhostCmsIntegration';
 
 
 // Firebase Authentication and Relational Sync Client Integrations
@@ -79,6 +83,9 @@ import {
   subscribeToKeywords,
   subscribeToArticles,
   subscribeToLogs,
+  subscribeToKeywordDiscoveries,
+  subscribeToKeywordClusters,
+  subscribeToKeywordGenerationLogs,
   fsSaveProject,
   fsDeleteProject,
   fsSaveKeyword,
@@ -97,7 +104,29 @@ export default function App() {
   // Navigation & Core States
   const [viewMode, setViewMode] = useState<'landing' | 'app' | 'pricing'>('landing');
   const [activeTab, setActiveTab] = useState<'dashboard' | 'projects' | 'keywords' | 'planner' | 'editor' | 'crawler' | 'settings' | 'brand'>('brand');
-  const [keywordsSubTab, setKeywordsSubTab] = useState<'explore' | 'tracker'>('explore');
+  const [keywordsSubTab, setKeywordsSubTab] = useState<'explore' | 'tracker' | 'ai-discovery'>('explore');
+  
+  // AI Keyword Discovery Sync States
+  const [discoveredKeywords, setDiscoveredKeywords] = useState<any[]>([]);
+  const [topicClusters, setTopicClusters] = useState<any[]>([]);
+  const [discoveryJobs, setDiscoveryJobs] = useState<any[]>([]);
+
+  // Unlimited Keyword Generation Engine states
+  const [discoverySourceType, setDiscoverySourceType] = useState<string>('niche_category');
+  const [discoverySourceValue, setDiscoverySourceValue] = useState<string>('');
+  const [discoveryKeywordTypes, setDiscoveryKeywordTypes] = useState<string[]>(['short-tail', 'long-tail', 'question', 'buyer-intent']);
+  const [discoveryCountryOverride, setDiscoveryCountryOverride] = useState<string>('');
+  const [discoveryLanguageOverride, setDiscoveryLanguageOverride] = useState<string>('');
+  const [discoverySearchFilter, setDiscoverySearchFilter] = useState<string>('');
+  const [discoverySelectedIntentFilter, setDiscoverySelectedIntentFilter] = useState<string>('All');
+  const [discoverySortField, setDiscoverySortField] = useState<string>('opportunityScore');
+  const [discoverySortDirection, setDiscoverySortDirection] = useState<'asc' | 'desc'>('desc');
+
+  // Project Creation Field Additions
+  const [newProjectNiche, setNewProjectNiche] = useState('');
+  const [newProjectCountry, setNewProjectCountry] = useState('US');
+  const [newProjectLanguage, setNewProjectLanguage] = useState('en');
+
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     const saved = localStorage.getItem('rs_theme');
     return (saved === 'light' || saved === 'dark') ? saved : 'dark';
@@ -135,7 +164,7 @@ export default function App() {
 
   // Editor-scoped state
   const [activeArticleId, setActiveArticleId] = useState<string>('a-3');
-  const [editorSubTab, setEditorSubTab] = useState<'write' | 'images' | 'youtube' | 'multilingual'>('write');
+  const [editorSubTab, setEditorSubTab] = useState<'write' | 'images' | 'youtube' | 'multilingual' | 'rewrite' | 'watermark'>('write');
 
   // Planner sub-toggle state
   const [plannerSubView, setPlannerSubView] = useState<'pipeline' | 'topical' | 'aiPlan' | 'autoScheduler'>('pipeline');
@@ -210,8 +239,28 @@ export default function App() {
   // States for active publishing gateway/dialog
   const [publishingArticle, setPublishingArticle] = useState<Article | null>(null);
   const [isPublishingToCms, setIsPublishingToCms] = useState(false);
-  const [selectedPublishPlatform, setSelectedPublishPlatform] = useState<'wordpress' | 'webflow' | 'shopify' | 'dummy' | 'headless_webhook'>('wordpress');
+  const [selectedPublishPlatform, setSelectedPublishPlatform] = useState<'wordpress' | 'webflow' | 'shopify' | 'dummy' | 'headless_webhook' | 'ghost'>('wordpress');
   const [cmsPublishResult, setCmsPublishResult] = useState<{ success: boolean; url?: string; error?: string } | null>(null);
+
+  // Ghost Custom Publication Options States
+  const [ghostPublishStatus, setGhostPublishStatus] = useState<'draft' | 'published' | 'scheduled'>('draft');
+  const [ghostScheduledTime, setGhostScheduledTime] = useState<string>('');
+  const [ghostTags, setGhostTags] = useState<string>('SEO, AI Generated, RankSyncer');
+  const [ghostSlug, setGhostSlug] = useState<string>('');
+  const [ghostVisibility, setGhostVisibility] = useState<'public' | 'members' | 'paid'>('public');
+
+  // Synchronize article slugs automatically when gateway is focused
+  useEffect(() => {
+    if (publishingArticle) {
+      setGhostSlug(publishingArticle.slug || '');
+      setGhostPublishStatus('draft');
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      tomorrow.setMinutes(0);
+      tomorrow.setSeconds(0);
+      setGhostScheduledTime(tomorrow.toISOString().slice(0, 16));
+    }
+  }, [publishingArticle]);
 
   // SaaS Stripe subscription tier states: 'free' | 'premium'
   const [activePlan, setActivePlan] = useState<'free' | 'premium'>(() => {
@@ -761,10 +810,39 @@ export default function App() {
       (error) => console.error("Firestore crawler logs sync error:", error)
     );
 
+    const unsubscribeDiscoveries = subscribeToKeywordDiscoveries(
+      selectedProjectId,
+      (fsDiscoveries) => {
+        setDiscoveredKeywords(fsDiscoveries);
+      },
+      (error) => console.error("Firestore discoveries sync error:", error)
+    );
+
+    const unsubscribeClusters = subscribeToKeywordClusters(
+      selectedProjectId,
+      (fsClusters) => {
+        setTopicClusters(fsClusters);
+      },
+      (error) => console.error("Firestore clusters sync error:", error)
+    );
+
+    const unsubscribeGenerationLogs = subscribeToKeywordGenerationLogs(
+      selectedProjectId,
+      (fsJobs) => {
+        // Sort descending by updated timestamp so is easy to see current status first
+        const sortedJobs = [...fsJobs].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+        setDiscoveryJobs(sortedJobs);
+      },
+      (error) => console.error("Firestore discovery jobs sync error:", error)
+    );
+
     return () => {
       unsubscribeKws();
       unsubscribeArts();
       unsubscribeLogs();
+      unsubscribeDiscoveries();
+      unsubscribeClusters();
+      unsubscribeGenerationLogs();
     };
   }, [currentUser, selectedProjectId]);
 
@@ -943,17 +1021,21 @@ export default function App() {
     e.preventDefault();
     if (!newProjectName || !newProjectDomain) return;
 
+    const cleanDomain = newProjectDomain.replace(/^(https?:\/\/)?(www\.)?/, '').toLowerCase();
     const newProj: Project = {
       id: `p-${Date.now()}`,
       name: newProjectName,
-      domain: newProjectDomain.replace(/^(https?:\/\/)?(www\.)?/, '').toLowerCase(),
+      domain: cleanDomain,
       visibilityIndex: 10.0,
       avgPosition: 50.0,
       organicTraffic: 100,
       cmsPlatform: newProjectCms,
       crawlStatus: 'STALE',
       lastCrawledAt: null,
-      crawlHistory: [8, 10, 9, 11, 10, 10, 10]
+      crawlHistory: [8, 10, 9, 11, 10, 10, 10],
+      niche: newProjectNiche,
+      country: newProjectCountry,
+      language: newProjectLanguage
     };
 
     // Seed some initial keywords for this domain
@@ -971,7 +1053,7 @@ export default function App() {
       {
         id: `k-${Date.now()}-2`,
         projectId: newProj.id,
-        term: `best guides for ${newProj.domain}`,
+        term: `best guides for ${cleanDomain}`,
         volume: 320,
         difficulty: 5,
         intent: 'Navigational',
@@ -992,6 +1074,28 @@ export default function App() {
       fsSaveProject(newProj, currentUser.uid);
       seedKws.forEach(k => fsSaveKeyword(k, newProj.id, currentUser.uid));
       fsSaveLog(bootLog, newProj.id, currentUser.uid);
+
+      // Trigger asynchronous background keyword discovery & topical clustering on server side
+      fetch('/api/keywords/discover', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          projectId: newProj.id,
+          domain: cleanDomain,
+          niche: newProjectNiche || `General business website in ${newProjectName}`,
+          country: newProjectCountry,
+          language: newProjectLanguage,
+          userId: currentUser.uid
+        })
+      })
+      .then(res => {
+        if (!res.ok) console.warn('Background project keyword discovery route returned non-200 status');
+      })
+      .catch(err => {
+        console.error('Trigger background keyword discovery error:', err);
+      });
     } else {
       setProjects(prev => [...prev, newProj]);
       setKeywords(prev => [...prev, ...seedKws]);
@@ -1002,6 +1106,9 @@ export default function App() {
     setNewProjectName('');
     setNewProjectDomain('');
     setNewProjectCms('wordpress');
+    setNewProjectNiche('');
+    setNewProjectCountry('US');
+    setNewProjectLanguage('en');
     setShowAddProject(false);
     setSelectedProjectId(newProj.id);
   };
@@ -1278,7 +1385,17 @@ export default function App() {
   };
 
   // Active Direct CMS Syndication API sync
-  const handleActiveCmsPublish = async (art: Article, platform: 'wordpress' | 'webflow' | 'shopify' | 'dummy' | 'headless_webhook') => {
+  const handleActiveCmsPublish = async (
+    art: Article, 
+    platform: 'wordpress' | 'webflow' | 'shopify' | 'dummy' | 'headless_webhook' | 'ghost',
+    extraOptions?: {
+      slug?: string;
+      status?: "draft" | "published" | "scheduled";
+      scheduledPublishTime?: string;
+      tags?: string[];
+      featureImage?: string;
+    }
+  ) => {
     setIsPublishingToCms(true);
     setCmsPublishResult(null);
 
@@ -1305,13 +1422,19 @@ export default function App() {
             id: art.id,
             title: art.title,
             content: art.content,
-            slug: art.slug,
+            slug: extraOptions?.slug || art.slug,
             targetKeyword: art.targetKeyword,
-            metaDescription: art.metaDescription
+            metaDescription: art.metaDescription,
+            tags: extraOptions?.tags || ["SEO", "RankSyncer"],
+            featureImage: extraOptions?.featureImage || ""
           },
           platform: platform === 'dummy' ? 'wordpress' : platform,
           credentials,
-          isSandbox: isSandboxRequest
+          isSandbox: isSandboxRequest,
+          projectId: selectedProjectId,
+          userId: currentUser?.uid || "anonymous",
+          status: extraOptions?.status || "draft",
+          scheduledPublishTime: extraOptions?.scheduledPublishTime || null
         })
       });
 
@@ -2672,22 +2795,21 @@ export default function App() {
 
             return (
               <div className="space-y-6">
-                
-                {/* Segmented Subtab Navigation Switcher */}
-                <div className="flex bg-slate-100 p-1 rounded-2xl border border-slate-200/60 max-w-lg mb-2">
+                        {/* Segmented Subtab Navigation Switcher */}
+                <div className="flex bg-slate-100 p-1 rounded-2xl border border-slate-200/60 max-w-2xl mb-2">
                   <button
                     onClick={() => setKeywordsSubTab('explore')}
-                    className={`flex-1 py-2 px-4 text-xs font-bold rounded-xl transition-all duration-150 ${
+                    className={`flex-1 py-1.5 px-3 text-xs font-bold rounded-xl transition-all duration-150 ${
                       keywordsSubTab === 'explore'
                         ? 'bg-slate-900 text-white shadow-sm'
                         : 'text-slate-500 hover:text-slate-900'
                     }`}
                   >
-                    🔍 Keyword Search Explorer
+                    🔍 Keyword Explorer
                   </button>
                   <button
                     onClick={() => setKeywordsSubTab('tracker')}
-                    className={`flex-1 py-2 px-4 text-xs font-bold rounded-xl transition-all duration-150 ${
+                    className={`flex-1 py-1.5 px-3 text-xs font-bold rounded-xl transition-all duration-150 ${
                       keywordsSubTab === 'tracker'
                         ? 'bg-slate-900 text-white shadow-sm'
                         : 'text-slate-500 hover:text-slate-900'
@@ -2695,16 +2817,28 @@ export default function App() {
                   >
                     📊 Target Rank Tracker ({projectKeywords.length})
                   </button>
+                  <button
+                    onClick={() => setKeywordsSubTab('ai-discovery')}
+                    className={`flex-1 py-1.5 px-3 text-xs font-bold rounded-xl transition-all duration-150 ${
+                      keywordsSubTab === 'ai-discovery'
+                        ? 'bg-slate-900 text-white shadow-sm font-mono'
+                        : 'text-slate-500 hover:text-slate-900 font-mono'
+                    }`}
+                  >
+                    ✨ AI Niche Discovery ({discoveredKeywords.length})
+                  </button>
                 </div>
 
-                {keywordsSubTab === 'explore' ? (
+                {keywordsSubTab === 'explore' && (
                   <KeywordResearchSuite 
                     onTrackKeyword={handleExplorerTrackKeyword}
                     selectedProjectId={selectedProjectId}
                     projectName={currentProject.name}
                     trackedKeywordTerms={trackedTerms}
                   />
-                ) : (
+                )}
+
+                {keywordsSubTab === 'tracker' && (
                   <>
                     {/* Header Control Card */}
                     <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-2xs flex flex-col md:flex-row md:items-center justify-between gap-4 animate-fade-in">
@@ -2990,6 +3124,626 @@ export default function App() {
                   </div>
                 )}
                 </>
+                )}
+
+                {keywordsSubTab === 'ai-discovery' && (
+                  <div className="space-y-6 animate-fade-in font-sans">
+                    {/* Advanced Keywords Generation Panel */}
+                    <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
+                      <div className="border-b border-slate-100 pb-4 mb-4">
+                        <div className="flex items-center gap-2 flex-wrap mb-2">
+                          <span className="bg-blue-50 text-blue-700 text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full border border-blue-100 font-mono">
+                            Semantic Intelligence
+                          </span>
+                          <span className="bg-emerald-50 text-emerald-700 text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full border border-emerald-100 font-mono">
+                            Gemini 3.5 Active
+                          </span>
+                          <span className="bg-purple-50 text-purple-700 text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full border border-purple-100 font-mono">
+                            Unlimited Engine
+                          </span>
+                        </div>
+                        <h2 className="text-xl font-black text-slate-900 tracking-tight flex items-center gap-2">
+                          ⚡ Unlimited Intent-Driven AI Keyword Generator
+                        </h2>
+                        <p className="text-slate-500 text-xs mt-0.5">
+                          Unleash real competitor gap analysis, seed keyword expansions, sitemap audits, and product intent extraction on-demand.
+                        </p>
+                      </div>
+
+                      {/* Interactive Configuration Form */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        {/* Left column: Discovery Mode & Custom inputs */}
+                        <div className="space-y-4">
+                          <div>
+                            <label className="block text-xs font-black text-slate-600 uppercase tracking-wide mb-1.5">
+                              1. Select Keyword Discovery Mode
+                            </label>
+                            <select
+                              value={discoverySourceType}
+                              onChange={(e) => {
+                                setDiscoverySourceType(e.target.value);
+                                setDiscoverySourceValue(''); // clear value on change
+                              }}
+                              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 select-none cursor-pointer"
+                            >
+                              <option value="niche_category">Broad Niche Category Analysis</option>
+                              <option value="seed_keyword">Seed Keyword Core Expansion</option>
+                              <option value="competitor_url">Competitor Domain Gap Intelligence</option>
+                              <option value="website_url">Specific Website Path Audit</option>
+                              <option value="article_topic">Article Thesis / Content Authority Silo</option>
+                              <option value="existing_article">Existing Content Optimizer (LSI Injector)</option>
+                              <option value="sitemap_upload">Sitemap URL List Deconstruction</option>
+                              <option value="product_description">Product / Service Conversion Intent Mapping</option>
+                            </select>
+                          </div>
+
+                          <div>
+                            <label className="block text-xs font-black text-slate-600 uppercase tracking-wide mb-1.5">
+                              {discoverySourceType === 'niche_category' && 'Broad Niche Category or Vertical'}
+                              {discoverySourceType === 'seed_keyword' && 'Enter Seed Keyword Target'}
+                              {discoverySourceType === 'competitor_url' && 'Enter Competitor Website Domain'}
+                              {discoverySourceType === 'website_url' && 'Enter Website URL to Analyze'}
+                              {discoverySourceType === 'article_topic' && 'Enter Content Topic Idea'}
+                              {discoverySourceType === 'existing_article' && 'Paste Draft Content Copy / Article'}
+                              {discoverySourceType === 'sitemap_upload' && 'Enter Sitemap Raw Content or URLs'}
+                              {discoverySourceType === 'product_description' && 'Enter Product / Service Features'}
+                            </label>
+
+                            {discoverySourceType === 'existing_article' ? (
+                              <textarea
+                                value={discoverySourceValue}
+                                onChange={(e) => setDiscoverySourceValue(e.target.value)}
+                                placeholder="Paste your draft body content here to generate LSI keywords and adjacent cluster opportunities..."
+                                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 h-24"
+                              />
+                            ) : (
+                              <input
+                                type="text"
+                                value={discoverySourceValue}
+                                onChange={(e) => setDiscoverySourceValue(e.target.value)}
+                                placeholder={
+                                  discoverySourceType === 'seed_keyword' ? 'e.g., green web hosting' :
+                                  discoverySourceType === 'competitor_url' ? 'e.g., hostinger.com' :
+                                  discoverySourceType === 'website_url' ? 'e.g., myblog.com/seo-guide' :
+                                  discoverySourceType === 'article_topic' ? 'e.g., how to build a saas in 30 days' :
+                                  discoverySourceType === 'sitemap_upload' ? 'https://example.com/sitemap-posts.xml' :
+                                  discoverySourceType === 'product_description' ? 'e.g., zero-code marketing automation for fast-growing startups' :
+                                  `e.g., ${currentProject.niche || 'sustainable fashion ecommerce'}`
+                                }
+                                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                              />
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Right column: Target types and overrides */}
+                        <div className="space-y-4">
+                          <div>
+                            <label className="block text-xs font-black text-slate-600 uppercase tracking-wide mb-1.5">
+                              2. Target Keyword Categories
+                            </label>
+                            <div className="flex flex-wrap gap-2">
+                              {['short-tail', 'long-tail', 'question', 'buyer-intent', 'local-seo', 'lsi-variations'].map((type) => {
+                                const isChecked = discoveryKeywordTypes.includes(type);
+                                return (
+                                  <button
+                                    key={type}
+                                    type="button"
+                                    onClick={() => {
+                                      if (isChecked) {
+                                        setDiscoveryKeywordTypes(discoveryKeywordTypes.filter(t => t !== type));
+                                      } else {
+                                        setDiscoveryKeywordTypes([...discoveryKeywordTypes, type]);
+                                      }
+                                    }}
+                                    className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase font-mono tracking-wider border transition-all cursor-pointer ${
+                                      isChecked
+                                        ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                                        : 'bg-white text-slate-600 border-slate-200 hover:border-slate-400'
+                                    }`}
+                                  >
+                                    {type.replace('-', ' ')}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <label className="block text-xs font-black text-slate-600 uppercase tracking-wide mb-1">
+                                Country Code
+                              </label>
+                              <input
+                                type="text"
+                                value={discoveryCountryOverride}
+                                onChange={(e) => setDiscoveryCountryOverride(e.target.value.toUpperCase())}
+                                placeholder={currentProject.country || 'US'}
+                                maxLength={2}
+                                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 text-center uppercase"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs font-black text-slate-600 uppercase tracking-wide mb-1">
+                                Language Code
+                              </label>
+                              <input
+                                type="text"
+                                value={discoveryLanguageOverride}
+                                onChange={(e) => setDiscoveryLanguageOverride(e.target.value.toLowerCase())}
+                                placeholder={currentProject.language || 'en'}
+                                maxLength={2}
+                                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 text-center"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Run Trigger container */}
+                      <div className="flex justify-end pt-4 mt-4 border-t border-slate-100">
+                        <button
+                          onClick={async () => {
+                            try {
+                              if (!currentUser) return;
+                              const sourceValueResolved = discoverySourceValue.trim();
+                              
+                              const res = await fetch('/api/keywords/discover', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                  projectId: currentProject.id,
+                                  domain: currentProject.domain,
+                                  niche: currentProject.niche || `Niche analysis scan for ${currentProject.name}`,
+                                  country: discoveryCountryOverride.trim() || currentProject.country || 'US',
+                                  language: discoveryLanguageOverride.trim() || currentProject.language || 'en',
+                                  userId: currentUser.uid,
+                                  sourceType: discoverySourceType,
+                                  sourceValue: sourceValueResolved || currentProject.niche || 'sustainable business niche',
+                                  selectedKeywordTypes: discoveryKeywordTypes
+                                })
+                              });
+                              if (res.ok) {
+                                const bootLog: CrawlerLog = {
+                                  id: `l-${Date.now()}-rediscover`,
+                                  timestamp: new Date().toISOString(),
+                                  type: 'info',
+                                  message: `Unlimited AI keyword generator triggered. Mode: "${discoverySourceType}" for target: "${sourceValueResolved || currentProject.domain}"`,
+                                  module: 'SERP_CRAWLER'
+                                };
+                                fsSaveLog(bootLog, currentProject.id, currentUser.uid);
+                              }
+                            } catch (e) {
+                              console.error(e);
+                            }
+                          }}
+                          className="bg-slate-900 hover:bg-slate-800 text-white px-5 py-2.5 rounded-xl text-xs font-bold shadow-md flex items-center gap-1.5 transition-all cursor-pointer"
+                        >
+                          <Sparkles className="h-4 w-4 animate-pulse text-emerald-400" />
+                          <span>Generate Content Silos & SEO Opportunities</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Background Discovery Jobs Status / Log Streams Banner */}
+                    {discoveryJobs.length > 0 && (
+                      <div className="space-y-3">
+                        {discoveryJobs.slice(0, 2).map((job) => {
+                          const isActive = job.status === 'queued' || job.status === 'processing';
+                          const isFailed = job.status === 'failed';
+                          const isCompleted = job.status === 'completed';
+
+                          return (
+                            <div 
+                              key={job.id || job.projectId} 
+                              className={`border p-4 rounded-2xl transition-all duration-300 ${
+                                isActive ? 'bg-blue-50/55 border-blue-100 ring-2 ring-blue-500/10 animate-pulse' :
+                                isFailed ? 'bg-rose-50/55 border-rose-100' :
+                                'bg-slate-50/50 border-slate-200/50'
+                              }`}
+                            >
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-3">
+                                  {isActive ? (
+                                    <div className="bg-blue-500 rounded-full p-1.5 text-white">
+                                      <Loader2 className="h-4 w-4 animate-spin" />
+                                    </div>
+                                  ) : isFailed ? (
+                                    <div className="bg-rose-500 rounded-full p-1.5 text-white">
+                                      <AlertCircle className="h-4 w-4" />
+                                    </div>
+                                  ) : (
+                                    <div className="bg-emerald-500 rounded-full p-1.5 text-white">
+                                      <Check className="h-4 w-4" />
+                                    </div>
+                                  )}
+
+                                  <div>
+                                    <p className="text-xs font-bold text-slate-800">
+                                      AI Generation Status: <span className="font-mono text-[10px] uppercase py-0.5 px-2 rounded bg-white border border-slate-200 font-extrabold">{job.status}</span>
+                                    </p>
+                                    <p className="text-[10px] text-slate-500 mt-1 font-mono leading-relaxed">
+                                      Source Mode: <span className="text-slate-800 font-bold">{job.sourceType || 'broad niche'}</span> | Territory: {job.country || 'US'}/{job.language || 'en'} | Updated: {new Date(job.updatedAt).toLocaleTimeString()}
+                                    </p>
+                                  </div>
+                                </div>
+
+                                {isFailed && (
+                                  <button
+                                    onClick={() => {
+                                      if (!currentUser) return;
+                                      fetch('/api/keywords/discover', {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({
+                                          projectId: currentProject.id,
+                                          domain: currentProject.domain,
+                                          niche: currentProject.niche || `Niche description auto-scan for ${currentProject.name}`,
+                                          country: currentProject.country || 'US',
+                                          language: currentProject.language || 'en',
+                                          userId: currentUser.uid,
+                                          sourceType: job.sourceType,
+                                          sourceValue: job.sourceValue
+                                        })
+                                      });
+                                    }}
+                                    className="bg-rose-600 hover:bg-rose-500 text-white text-[10px] font-black uppercase px-2.5 py-1.5 rounded-lg font-mono transition-all cursor-pointer"
+                                  >
+                                    Retry Scrape
+                                  </button>
+                                )}
+                              </div>
+
+                              {isActive && (
+                                <div className="mt-3">
+                                  <div className="w-full bg-slate-200 h-1.5 rounded-full overflow-hidden">
+                                    <div className="bg-blue-500 h-full animate-pulse rounded-full" style={{ width: '65%' }}></div>
+                                  </div>
+                                  <p className="text-[10px] text-blue-700 font-mono mt-1 w-full text-left truncate flex items-center gap-1 font-bold animate-pulse">
+                                    <span>●</span> Running secure server-side crawlers & expanding keyword universe with Gemini AI content clusters...
+                                  </p>
+                                </div>
+                              )}
+
+                              {isFailed && job.error && (
+                                <div className="bg-rose-100/60 p-2.5 rounded-xl mt-3 text-[10.5px] font-mono text-rose-800 leading-normal">
+                                  System Exception Trace: {job.error}
+                                </div>
+                              )}
+
+                              {isCompleted && (
+                                <p className="text-[10px] text-emerald-700 font-mono mt-2 flex items-center gap-1 font-bold">
+                                  <span>✓</span> Core intelligence generated! Built clusters, topical scoring, and stored keyword metrics inside target tracker logs.
+                                </p>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* Filters & Sorting Controls */}
+                    <div className="bg-slate-50 border border-slate-200/60 p-4 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                      <div className="flex flex-1 gap-2 flex-col sm:flex-row">
+                        {/* Search Input */}
+                        <div className="relative flex-1">
+                          <Search className="absolute left-3 top-2.5 h-3.5 w-3.5 text-slate-400" />
+                          <input
+                            type="text"
+                            value={discoverySearchFilter}
+                            onChange={(e) => setDiscoverySearchFilter(e.target.value)}
+                            placeholder="Filter discovered keywords..."
+                            className="bg-white border border-slate-200/80 rounded-xl pl-9 pr-3 py-1.5 text-xs font-medium w-full text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                        </div>
+
+                        {/* Intent Filter */}
+                        <select
+                          value={discoverySelectedIntentFilter}
+                          onChange={(e) => setDiscoverySelectedIntentFilter(e.target.value)}
+                          className="bg-white border border-slate-200/80 rounded-xl px-3 py-1.5 text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 select-none cursor-pointer"
+                        >
+                          <option value="All">All Search Intents</option>
+                          <option value="Informational">Informational</option>
+                          <option value="Transactional">Transactional</option>
+                          <option value="Commercial">Commercial</option>
+                          <option value="Navigational">Navigational</option>
+                        </select>
+                      </div>
+
+                      {/* Sort Controls */}
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-black uppercase text-slate-400 font-mono">Sort By:</span>
+                        <select
+                          value={discoverySortField}
+                          onChange={(e) => setDiscoverySortField(e.target.value)}
+                          className="bg-white border border-slate-200/80 rounded-xl px-3 py-1.5 text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 select-none cursor-pointer"
+                        >
+                          <option value="opportunityScore">Top Opportunity Score</option>
+                          <option value="volume">Search Volume</option>
+                          <option value="difficulty">Keyword Difficulty</option>
+                          <option value="topicalRelevance">Topical Relevance</option>
+                          <option value="cpc">Estimated CPC value</option>
+                        </select>
+
+                        <button
+                          onClick={() => setDiscoverySortDirection(discoverySortDirection === 'asc' ? 'desc' : 'asc')}
+                          className="bg-white border border-slate-200 hover:border-slate-300 p-1.5 rounded-xl text-slate-600 hover:text-slate-900 transition-all cursor-pointer"
+                          title="Toggle sort direction"
+                        >
+                          <TrendingUp className={`h-4 w-4 transform transition-transform ${discoverySortDirection === 'asc' ? 'rotate-180' : ''}`} />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Grid containing Topic Clusters and All Discovered Keywords list */}
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                      
+                      {/* Left Side: Discovered Keywords List */}
+                      <div className="lg:col-span-2 space-y-4">
+                        <div className="bg-white rounded-3xl border border-slate-200/90 shadow-3xs overflow-hidden">
+                          <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50 flex-wrap gap-2">
+                            <h3 className="text-xs font-black text-slate-800 uppercase tracking-wider font-mono">
+                              Discovered SEO Keywords ({discoveredKeywords.length})
+                            </h3>
+                            <span className="text-[10px] text-slate-400 font-medium">Click "Add To Tracker" to track keywords in real-time</span>
+                          </div>
+
+                          {discoveredKeywords.length === 0 ? (
+                            <div className="p-16 text-center text-slate-400 font-medium">
+                              <Sparkles className="h-8 w-8 mx-auto text-blue-400 animate-pulse mb-3" />
+                              <p className="text-slate-800 text-sm font-black font-mono">Topical Engine Initializing</p>
+                              <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto leading-relaxed">
+                                Enter your target seed keyword, competitor domain or browse Broad Niche and click "Generate" to construct your search term universe.
+                              </p>
+                            </div>
+                          ) : (
+                            <div className="overflow-x-auto">
+                              <table className="w-full text-left border-collapse text-xs">
+                                <thead>
+                                  <tr className="border-b border-slate-100 text-slate-400 font-black uppercase text-[9px] bg-slate-50/20">
+                                    <th className="py-3 px-4">Search Term Opportunity</th>
+                                    <th className="py-3 px-3">Search Volume</th>
+                                    <th className="py-3 px-3">Difficulty %</th>
+                                    <th className="py-3 px-3">Google Intent</th>
+                                    <th className="py-3 px-3">Relevance</th>
+                                    <th className="py-3 px-3">Opportunity</th>
+                                    <th className="py-3 px-4 text-right">Actions</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100/60">
+                                  {(() => {
+                                    const filtered = discoveredKeywords
+                                      .filter(kw => {
+                                        const termString = kw.term || kw.keyword || '';
+                                        const termMatches = termString.toLowerCase().includes(discoverySearchFilter.toLowerCase());
+                                        const intentMatches = discoverySelectedIntentFilter === 'All' || kw.intent === discoverySelectedIntentFilter;
+                                        return termMatches && intentMatches;
+                                      })
+                                      .sort((a, b) => {
+                                        let valA = a[discoverySortField];
+                                        let valB = b[discoverySortField];
+                                        if (valA === undefined) valA = 0;
+                                        if (valB === undefined) valB = 0;
+                                        
+                                        if (typeof valA === 'string' && typeof valB === 'string') {
+                                          return discoverySortDirection === 'asc' 
+                                            ? valA.localeCompare(valB)
+                                            : valB.localeCompare(valA);
+                                        }
+                                        
+                                        return discoverySortDirection === 'asc'
+                                          ? (valA as number) - (valB as number)
+                                          : (valB as number) - (valA as number);
+                                      });
+
+                                    if (filtered.length === 0) {
+                                      return (
+                                        <tr>
+                                          <td colSpan={7} className="text-center py-12 text-slate-400 font-bold">
+                                            No keywords match your selected filter criteria.
+                                          </td>
+                                        </tr>
+                                      );
+                                    }
+
+                                    return filtered.map((kw) => {
+                                      const score = kw.opportunityScore || 50;
+                                      const isAwesomeWin = score >= 75;
+                                      const isHighWin = score >= 50 && score < 75;
+                                      const currentTermString = kw.term || kw.keyword || '';
+                                      const isAlreadyTracked = trackedTerms.includes(currentTermString.toLowerCase());
+
+                                      const relativeRelevance = kw.topicalRelevance || 75;
+
+                                      return (
+                                        <tr key={currentTermString} className="hover:bg-slate-50/40 transition-all font-sans">
+                                          <td className="py-3.5 px-4 font-bold text-slate-900">
+                                            <div className="max-w-xs md:max-w-sm truncate whitespace-normal leading-normal">
+                                              <div className="flex items-center gap-1.5 flex-wrap">
+                                                <span className="text-slate-900 font-extrabold">{currentTermString}</span>
+                                                {kw.sourceType && (
+                                                  <span className="bg-slate-100 text-slate-500 font-mono text-[8px] px-1 py-0.5 rounded uppercase border border-slate-200">
+                                                    {kw.sourceType.replace('_', ' ')}
+                                                  </span>
+                                                )}
+                                              </div>
+                                              
+                                              {kw.suggestedTitle && (
+                                                <p className="text-[10px] font-mono font-medium text-slate-400 mt-0.5 leading-relaxed">
+                                                  Suggested Outline: "{kw.suggestedTitle}"
+                                                </p>
+                                              )}
+                                              
+                                              {kw.contentAngle && (
+                                                <p className="text-[9px] font-sans font-normal text-slate-500 mt-0.5 max-w-md">
+                                                  Angle Target: <span className="text-slate-600 italic font-semibold">"{kw.contentAngle}"</span> ({kw.suggestedArticleType || 'SEO Column'})
+                                                </p>
+                                              )}
+                                            </div>
+                                          </td>
+                                          <td className="py-3.5 px-3 font-mono font-bold text-slate-700">
+                                            {kw.volume ? kw.volume.toLocaleString() : 'N/A'}
+                                          </td>
+                                          <td className="py-3.5 px-3">
+                                            <div className="flex items-center gap-1.5">
+                                              <div className="w-12 bg-slate-100 h-1.5 rounded-full overflow-hidden shrink-0">
+                                                <div 
+                                                  className={`h-full rounded-full ${
+                                                    kw.difficulty >= 60 ? 'bg-rose-500' :
+                                                    kw.difficulty >= 35 ? 'bg-amber-500' :
+                                                    'bg-emerald-500'
+                                                  }`}
+                                                  style={{ width: `${kw.difficulty}%` }}
+                                                ></div>
+                                              </div>
+                                              <span className="font-mono text-[10px] font-bold text-slate-500">{kw.difficulty}%</span>
+                                            </div>
+                                          </td>
+                                          <td className="py-3.5 px-3">
+                                            <span className={`text-[10px] font-bold uppercase tracking-wider font-mono px-2 py-0.5 rounded-md border ${
+                                              kw.intent === 'Transactional' ? 'bg-violet-50 text-violet-700 border-violet-100' :
+                                              kw.intent === 'Commercial' ? 'bg-emerald-50 text-emerald-700 border-emerald-100' :
+                                              kw.intent === 'Navigational' ? 'bg-sky-50 text-sky-700 border-sky-100' :
+                                              'bg-slate-100 text-slate-600 border-slate-200'
+                                            }`}>
+                                              {kw.intent}
+                                            </span>
+                                          </td>
+                                          <td className="py-3.5 px-3">
+                                            <div className="flex items-center gap-1">
+                                              <span className="font-mono text-[10px] font-black text-slate-600">
+                                                {relativeRelevance}%
+                                              </span>
+                                            </div>
+                                          </td>
+                                          <td className="py-3.5 px-3">
+                                            <div className="flex items-center gap-1">
+                                              <span className={`text-[11px] font-mono font-extrabold px-2 py-0.5 rounded-md border ${
+                                                isAwesomeWin ? 'bg-emerald-100 text-emerald-800 border-emerald-200 shadow-xs' :
+                                                isHighWin ? 'bg-blue-50 text-blue-700 border-blue-100' :
+                                                'bg-slate-150 text-slate-600 border-slate-250/20'
+                                              }`}>
+                                                {score}
+                                              </span>
+                                              {isAwesomeWin && (
+                                                <span className="text-[9px] font-mono font-black text-emerald-700 tracking-tighter uppercase whitespace-nowrap bg-emerald-50 border border-emerald-200 py-0.5 px-1 rounded">Win</span>
+                                              )}
+                                            </div>
+                                          </td>
+                                          <td className="py-3.5 px-4 text-right">
+                                            {isAlreadyTracked ? (
+                                              <span className="text-[10px] font-bold font-mono text-emerald-600 flex items-center justify-end gap-1">
+                                                <Check className="h-3 w-3" /> Tracked
+                                              </span>
+                                            ) : (
+                                              <button
+                                                onClick={() => handleExplorerTrackKeyword(currentTermString, kw.volume || 100, kw.difficulty || 40, kw.intent || 'Informational')}
+                                                className="bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-[10px] font-bold px-2.5 py-1 rounded-lg cursor-pointer transition-all"
+                                              >
+                                                Add To Tracker
+                                              </button>
+                                            )}
+                                          </td>
+                                        </tr>
+                                      );
+                                    });
+                                  })()}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Right Side: Topic Clusters Dashboard Panel */}
+                      <div className="space-y-4 font-sans">
+                        <div className="bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-3xs">
+                          <div className="p-4 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
+                            <h3 className="text-xs font-black text-slate-800 uppercase tracking-wider font-mono">
+                              Topical Clusters ({topicClusters.length})
+                            </h3>
+                          </div>
+
+                          {topicClusters.length === 0 ? (
+                            <div className="p-12 text-center text-slate-400 font-medium">
+                              <Layers className="h-8 w-8 mx-auto text-slate-300 animate-pulse mb-3" />
+                              <p className="text-slate-700 text-sm font-black">No Clusters Synthesized</p>
+                              <p className="text-[10px] text-slate-500 mt-1 max-w-xs mx-auto leading-relaxed">
+                                Topic clusters group discovered keywords into highly authoritative semantic bundles.
+                              </p>
+                            </div>
+                          ) : (
+                            <div className="p-4 space-y-4 divide-y divide-slate-100 max-h-[850px] overflow-y-auto">
+                              {topicClusters.map((cluster) => (
+                                <div key={cluster.name} className="pt-4 first:pt-0">
+                                  <div className="flex items-start justify-between gap-2">
+                                    <div>
+                                      <h4 className="font-extrabold text-xs text-slate-900 leading-tight">
+                                        {cluster.name}
+                                      </h4>
+                                      <p className="text-[9px] text-slate-400 font-mono mt-0.5 leading-relaxed">
+                                        Primary target: <span className="font-bold underline text-slate-600">{cluster.primaryKeyword}</span>
+                                      </p>
+                                    </div>
+                                    <span className="bg-slate-100 text-slate-700 text-[9px] font-black uppercase font-mono px-2 py-0.5 rounded shrink-0">
+                                      {cluster.size} Keywords
+                                    </span>
+                                  </div>
+
+                                  <div className="grid grid-cols-2 gap-2 mt-3 text-[9px] font-mono leading-none border border-slate-50 p-2 rounded-xl bg-slate-50/50">
+                                    <div>
+                                      <p className="text-slate-400 font-sans">Avg Difficulty</p>
+                                      <p className="font-bold text-slate-700 mt-1">{cluster.avgDifficulty || 40}%</p>
+                                    </div>
+                                    <div>
+                                      <p className="text-slate-400 font-sans font-medium">Avg Win Opportunity</p>
+                                      <p className="font-bold text-emerald-600 mt-1">{cluster.avgOpportunityScore || 70}/100</p>
+                                    </div>
+                                  </div>
+
+                                  {/* Render Pill Badges representing supporting keywords */}
+                                  <div className="flex flex-wrap gap-1.5 mt-3">
+                                    {cluster.keywords && cluster.keywords.map((kw: string) => {
+                                      const isAlreadyTracked = trackedTerms.includes(kw.toLowerCase());
+                                      return (
+                                        <button
+                                          key={kw}
+                                          onClick={() => {
+                                            if (isAlreadyTracked) return;
+                                            // Quick check: find details in discoveredKeywords or default
+                                            const kwDetails = discoveredKeywords.find(d => {
+                                              const termString = d.term || d.keyword || '';
+                                              return termString.toLowerCase() === kw.toLowerCase();
+                                            }) || {};
+                                            handleExplorerTrackKeyword(
+                                              kw, 
+                                              kwDetails.volume || 100, 
+                                              kwDetails.difficulty || 35, 
+                                              kwDetails.intent || 'Informational'
+                                            );
+                                          }}
+                                          className={`text-[9px] font-medium py-1 px-2.5 rounded-full border transition-all duration-150 flex items-center gap-1 cursor-pointer truncate max-w-full ${
+                                            isAlreadyTracked 
+                                              ? 'bg-emerald-50 text-emerald-700 border-emerald-100 hover:bg-emerald-100'
+                                              : 'bg-white text-slate-600 border-slate-200 hover:border-slate-400 hover:text-slate-900'
+                                          }`}
+                                        >
+                                          {isAlreadyTracked && <Check className="h-2 w-2 shrink-0" />}
+                                          <span className="truncate">{kw}</span>
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                    </div>
+                  </div>
                 )}
 
               </div>
@@ -3326,6 +4080,22 @@ export default function App() {
                         >
                           Enterprise Multilingual
                         </button>
+                        <button
+                          onClick={() => setEditorSubTab('rewrite')}
+                          className={`px-3 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer shrink-0 ${
+                            editorSubTab === 'rewrite' ? 'bg-white text-slate-900 shadow-3xs' : 'text-slate-500 hover:text-slate-850'
+                          }`}
+                        >
+                          AI Rewrite Hub
+                        </button>
+                        <button
+                          onClick={() => setEditorSubTab('watermark')}
+                          className={`px-3 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer shrink-0 ${
+                            editorSubTab === 'watermark' ? 'bg-white text-slate-900 shadow-3xs' : 'text-slate-500 hover:text-slate-850'
+                          }`}
+                        >
+                          Watermark & Exports
+                        </button>
                       </div>
 
                       <div className="flex items-center space-x-2">
@@ -3386,6 +4156,29 @@ export default function App() {
                             updateArticleField(editorArticle.id, 'metaDescription', trans.localized_meta_description);
                             updateArticleField(editorArticle.id, 'slug', trans.translated_slug);
                           }}
+                        />
+                      </div>
+                    ) : editorSubTab === 'rewrite' ? (
+                      <div className="p-6 flex-1 flex flex-col overflow-y-auto">
+                        <EnterpriseAIRewriteSuite 
+                          activeArticle={editorArticle}
+                          onApplyChanges={(fields) => {
+                            updateArticleField(editorArticle.id, 'title', fields.title);
+                            updateArticleField(editorArticle.id, 'content', fields.content);
+                            updateArticleField(editorArticle.id, 'metaDescription', fields.metaDescription);
+                          }}
+                        />
+                      </div>
+                    ) : editorSubTab === 'watermark' ? (
+                      <div className="p-6 flex-1 flex flex-col overflow-y-auto">
+                        <WatermarkSuite 
+                          activeArticle={editorArticle}
+                          activePlan={activePlan}
+                          onPlanChange={(newPlan) => {
+                            setActivePlan(newPlan);
+                            localStorage.setItem('rs_active_plan', newPlan);
+                          }}
+                          userId={currentUser ? currentUser.uid : "anonymous"}
                         />
                       </div>
                     ) : (
@@ -4028,6 +4821,29 @@ export default function App() {
                 </div>
 
               </div>
+
+              {/* Ghost CMS Integration panel */}
+              <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-2xs">
+                <GhostCmsIntegration 
+                  projectId={selectedProjectId} 
+                  userId={currentUser?.uid || "anonymous"} 
+                  activePlan={activePlan}
+                  onLogAdded={(newLog) => {
+                    const mappedLog: CrawlerLog = {
+                      id: newLog.id,
+                      timestamp: newLog.timestamp,
+                      type: newLog.type,
+                      message: newLog.message,
+                      module: "CMS_SYNC"
+                    };
+                    if (currentUser) {
+                      fsSaveLog(mappedLog, selectedProjectId, currentUser.uid);
+                    } else {
+                      setLogs(prev => [mappedLog, ...prev]);
+                    }
+                  }}
+                />
+              </div>
               
               {/* API keys config proxy block */}
               <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-2xs space-y-4">
@@ -4170,6 +4986,52 @@ export default function App() {
                   <option value="webflow">Webflow Collection mapping</option>
                   <option value="custom">No CMS (Custom offline simulation)</option>
                 </select>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-black uppercase text-slate-400 mb-1 leading-relaxed">Product / Business Niche Description</label>
+                <input 
+                  type="text" 
+                  required
+                  placeholder="e.g. Vegan recipes, local sustainable food delivery, eco-friendly cooking"
+                  className="w-full bg-slate-50 border border-slate-100 text-sm rounded-xl p-3 outline-none focus:ring-1 focus:ring-blue-500 text-slate-800"
+                  value={newProjectNiche}
+                  onChange={(e) => setNewProjectNiche(e.target.value)}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[10px] font-black uppercase text-slate-400 mb-1 leading-relaxed">Target Territory</label>
+                  <select 
+                    className="w-full bg-slate-50 border border-slate-100 text-sm rounded-xl p-3 outline-none focus:ring-1 focus:ring-blue-500 text-slate-800 font-bold"
+                    value={newProjectCountry}
+                    onChange={(e) => setNewProjectCountry(e.target.value)}
+                  >
+                    <option value="US">United States (US)</option>
+                    <option value="GB">United Kingdom (GB)</option>
+                    <option value="CA">Canada (CA)</option>
+                    <option value="AU">Australia (AU)</option>
+                    <option value="DE">Germany (DE)</option>
+                    <option value="FR">France (FR)</option>
+                    <option value="ES">Spain (ES)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-black uppercase text-slate-400 mb-1 leading-relaxed">Primary Language</label>
+                  <select 
+                    className="w-full bg-slate-50 border border-slate-100 text-sm rounded-xl p-3 outline-none focus:ring-1 focus:ring-blue-500 text-slate-800 font-bold"
+                    value={newProjectLanguage}
+                    onChange={(e) => setNewProjectLanguage(e.target.value)}
+                  >
+                    <option value="en">English (en)</option>
+                    <option value="es">Español (es)</option>
+                    <option value="fr">Français (fr)</option>
+                    <option value="de">Deutsch (de)</option>
+                    <option value="it">Italiano (it)</option>
+                  </select>
+                </div>
               </div>
 
               <div className="pt-2 flex justify-end space-x-2">
@@ -4672,6 +5534,32 @@ export default function App() {
                       </span>
                     </button>
 
+                    {/* OPTION 6: Native Ghost CMS */}
+                    <button 
+                      type="button"
+                      onClick={() => setSelectedPublishPlatform('ghost')}
+                      className={`p-3.5 rounded-2xl border text-left flex items-start justify-between transition-all cursor-pointer ${
+                        selectedPublishPlatform === 'ghost' 
+                          ? 'border-[#ff1a75] bg-[#ff1a75]/5 shadow-[0_0_8px_rgba(255,26,117,0.15)]' 
+                          : 'border-slate-200 hover:bg-slate-50'
+                      }`}
+                    >
+                      <div className="flex items-center space-x-3">
+                        <div className="h-8 w-8 bg-rose-50 text-[#ff1a75] border border-rose-100 rounded-xl flex items-center justify-center shrink-0">
+                          <Radio className="h-4 w-4 font-bold" />
+                        </div>
+                        <div>
+                          <p className="text-xs font-black text-slate-900">Ghost Admin REST</p>
+                          <p className="text-[9px] text-slate-400">
+                            Natively linked domains
+                          </p>
+                        </div>
+                      </div>
+                      <span className={`h-4 w-4 rounded-full border flex items-center justify-center shrink-0 ${selectedPublishPlatform === 'ghost' ? 'border-[#ff1a75] bg-[#ff1a75] text-white' : 'border-slate-300'}`}>
+                        {selectedPublishPlatform === 'ghost' && <span className="h-1.5 w-1.5 rounded-full bg-white" />}
+                      </span>
+                    </button>
+
                   </div>
                 </div>
 
@@ -4697,6 +5585,97 @@ export default function App() {
                   </p>
                 )}
 
+                {/* GHOST CMS METADATA CONFIGURATION PANEL */}
+                {selectedPublishPlatform === 'ghost' && (
+                  <div className="bg-slate-50 border border-slate-150 p-4 rounded-3xl mt-4 space-y-4 animate-fade-in font-sans">
+                    <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                      <span className="text-xs font-black uppercase text-slate-800 tracking-wider flex items-center gap-1.5">
+                        <Radio className="h-4 w-4 text-[#ff1a75]" />
+                        Ghost Metadata & Syndication Settings
+                      </span>
+                      <span className="text-[10px] text-slate-400 font-bold">Configure payload options prior to scheduling or sync dispatch</span>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {/* Sub-item: URL Slug Edit */}
+                      <div className="space-y-1">
+                        <label className="block text-[10px] font-black uppercase text-slate-500">Resource URL Slug</label>
+                        <input 
+                          type="text"
+                          value={ghostSlug}
+                          onChange={(e) => setGhostSlug(e.target.value)}
+                          placeholder="slug-value-here"
+                          className="bg-white border border-slate-200 text-xs p-2.5 outline-none rounded-xl focus:ring-1 focus:ring-slate-500 w-full font-mono font-bold text-slate-700"
+                        />
+                      </div>
+
+                      {/* Sub-item: Tags List */}
+                      <div className="space-y-1">
+                        <label className="block text-[10px] font-black uppercase text-slate-500">Categories / Tags (Comma Separated)</label>
+                        <input 
+                          type="text"
+                          value={ghostTags}
+                          onChange={(e) => setGhostTags(e.target.value)}
+                          placeholder="e.g. SEO, Growth, Marketing"
+                          className="bg-white border border-slate-200 text-xs p-2.5 outline-none rounded-xl focus:ring-1 focus:ring-slate-500 w-full text-slate-705 font-semibold"
+                        />
+                      </div>
+
+                      {/* Sub-item: Publish Status */}
+                      <div className="space-y-1">
+                        <label className="block text-[10px] font-black uppercase text-slate-500">Default Post Status State</label>
+                        <select 
+                          value={ghostPublishStatus}
+                          onChange={(e) => setGhostPublishStatus(e.target.value as any)}
+                          className="bg-white border border-slate-200 text-xs p-2.5 outline-none rounded-xl focus:ring-1 focus:ring-slate-500 w-full font-extrabold text-slate-800 cursor-pointer"
+                        >
+                          <option value="draft">Save as Draft (Safe)</option>
+                          <option value="published">Publish Instantly (Live)</option>
+                          <option value="scheduled">Schedule Post (Autopilot Worker)</option>
+                        </select>
+                      </div>
+
+                      {/* Sub-item: Visibility */}
+                      <div className="space-y-1">
+                        <label className="block text-[10px] font-black uppercase text-slate-500">Ghost Members Audience Visibility</label>
+                        <select 
+                          value={ghostVisibility}
+                          onChange={(e) => setGhostVisibility(e.target.value as any)}
+                          className="bg-white border border-slate-200 text-xs p-2.5 outline-none rounded-xl focus:ring-1 focus:ring-slate-500 w-full font-extrabold text-slate-800 cursor-pointer"
+                        >
+                          <option value="public">Public (Everyone)</option>
+                          <option value="members">Members-Only (Free Register)</option>
+                          <option value="paid">Paid-Only Members (Stripe Wall)</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Conditional scheduling picker */}
+                    {ghostPublishStatus === 'scheduled' && (
+                      <div className="bg-amber-50/50 border border-amber-100 p-3.5 rounded-xl space-y-2 animate-slide-up">
+                        <div className="flex items-start gap-2">
+                          <Clock className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                          <div>
+                            <span className="block text-xs font-bold text-amber-800">Background Schedule Core (Continuous Worker Mode)</span>
+                            <span className="block text-[10px] text-slate-550 leading-relaxed font-semibold">
+                              The background task daemon tracks UTC time coordinates continuously firing scheduled requests.
+                            </span>
+                          </div>
+                        </div>
+                        <div className="pt-1.5 flex items-center gap-3">
+                          <label className="text-[10px] font-black uppercase text-amber-800 inline-block shrink-0">Release Timestamp (Local Time):</label>
+                          <input 
+                            type="datetime-local"
+                            value={ghostScheduledTime}
+                            onChange={(e) => setGhostScheduledTime(e.target.value)}
+                            className="bg-white border border-amber-200 text-xs p-2 outline-none rounded-xl font-bold text-slate-700 cursor-pointer"
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 <div className="flex items-center justify-end gap-2 border-t border-slate-100 pt-4 mt-4 font-sans">
                   <button 
                     type="button"
@@ -4709,7 +5688,18 @@ export default function App() {
                   <button 
                     type="button"
                     disabled={isPublishingToCms}
-                    onClick={() => handleActiveCmsPublish(publishingArticle, selectedPublishPlatform)}
+                    onClick={() => {
+                      if (selectedPublishPlatform === 'ghost') {
+                        handleActiveCmsPublish(publishingArticle, 'ghost', {
+                          slug: ghostSlug,
+                          status: ghostPublishStatus,
+                          scheduledPublishTime: ghostPublishStatus === 'scheduled' ? new Date(ghostScheduledTime).toISOString() : undefined,
+                          tags: ghostTags.split(',').map(t => t.trim()).filter(Boolean)
+                        });
+                      } else {
+                        handleActiveCmsPublish(publishingArticle, selectedPublishPlatform);
+                      }
+                    }}
                     className="px-5 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-extrabold rounded-xl transition cursor-pointer shadow flex items-center justify-center gap-2 min-w-[120px] disabled:bg-blue-300"
                   >
                     {isPublishingToCms ? (
@@ -4719,7 +5709,7 @@ export default function App() {
                       </>
                     ) : (
                       <>
-                        <span>Publish Draft</span>
+                        <span>{ghostPublishStatus === 'scheduled' ? 'Schedule Release' : 'Publish Post'}</span>
                         <Send className="h-3 w-3" />
                       </>
                     )}

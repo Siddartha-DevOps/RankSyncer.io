@@ -31,7 +31,10 @@ service cloud.firestore {
         && (!data.keys().contains('avgPosition') || data.avgPosition is number)
         && (!data.keys().contains('organicTraffic') || data.organicTraffic is int)
         && (!data.keys().contains('cmsPlatform') || data.cmsPlatform in ['wordpress', 'webflow', 'ghost', 'custom'])
-        && (!data.keys().contains('crawlStatus') || data.crawlStatus in ['STALE', 'CRAWLING', 'COMPLETED', 'FAILED']);
+        && (!data.keys().contains('crawlStatus') || data.crawlStatus in ['STALE', 'CRAWLING', 'COMPLETED', 'FAILED'])
+        && (!data.keys().contains('niche') || data.niche is string)
+        && (!data.keys().contains('country') || data.country is string)
+        && (!data.keys().contains('language') || data.language is string);
     }
 
     match /projects/{projectId} {
@@ -233,6 +236,82 @@ service cloud.firestore {
 
           allow delete: if isSignedIn() && isProjectOwner(projectId);
         }
+      }
+
+      // 6. KEYWORD DISCOVERIES
+      function isValidDiscovery(data) {
+        return data.keys().hasAll(['id', 'projectId', 'keyword', 'ownerId'])
+          && data.id is string && data.id.size() <= 128
+          && data.projectId == projectId
+          && data.keyword is string && data.keyword.size() <= 200
+          && data.ownerId == request.auth.uid;
+      }
+
+      match /keyword_discoveries/{discoveryId} {
+        allow get, list: if isSignedIn() && isProjectOwner(projectId);
+        allow create, update: if isSignedIn()
+          && isValidId(discoveryId)
+          && isProjectOwner(projectId)
+          && isValidDiscovery(request.resource.data)
+          && request.resource.data.id == discoveryId;
+        allow delete: if isSignedIn() && isProjectOwner(projectId);
+      }
+
+      // 7. KEYWORD CLUSTERS
+      function isValidCluster(data) {
+        return data.keys().hasAll(['id', 'projectId', 'clusterName', 'ownerId'])
+          && data.id is string && data.id.size() <= 128
+          && data.projectId == projectId
+          && data.clusterName is string && data.clusterName.size() <= 200
+          && data.ownerId == request.auth.uid;
+      }
+
+      match /keyword_clusters/{clusterId} {
+        allow get, list: if isSignedIn() && isProjectOwner(projectId);
+        allow create, update: if isSignedIn()
+          && isValidId(clusterId)
+          && isProjectOwner(projectId)
+          && isValidCluster(request.resource.data)
+          && request.resource.data.id == clusterId;
+        allow delete: if isSignedIn() && isProjectOwner(projectId);
+      }
+
+      // 8. KEYWORD GENERATION LOGS
+      function isValidGenLog(data) {
+        return data.keys().hasAll(['id', 'projectId', 'status', 'ownerId'])
+          && data.id is string && data.id.size() <= 128
+          && data.projectId == projectId
+          && data.status in ['queued', 'processing', 'completed', 'failed']
+          && data.ownerId == request.auth.uid;
+      }
+
+      match /keyword_generation_logs/{logId} {
+        allow get, list: if isSignedIn() && isProjectOwner(projectId);
+        allow create, update: if isSignedIn()
+          && isValidId(logId)
+          && isProjectOwner(projectId)
+          && isValidGenLog(request.resource.data)
+          && request.resource.data.id == logId;
+        allow delete: if isSignedIn() && isProjectOwner(projectId);
+      }
+
+      // 9. KEYWORD CACHE
+      function isValidCache(data) {
+        return data.keys().hasAll(['id', 'projectId', 'domain', 'ownerId'])
+          && data.id is string && data.id.size() <= 128
+          && data.projectId == projectId
+          && data.domain is string && data.domain.size() <= 300
+          && data.ownerId == request.auth.uid;
+      }
+
+      match /keyword_cache/{cacheId} {
+        allow get, list: if isSignedIn() && isProjectOwner(projectId);
+        allow create, update: if isSignedIn()
+          && isValidId(cacheId)
+          && isProjectOwner(projectId)
+          && isValidCache(request.resource.data)
+          && request.resource.data.id == cacheId;
+        allow delete: if isSignedIn() && isProjectOwner(projectId);
       }
     }
   }

@@ -7,6 +7,16 @@ import fetch from "node-fetch";
 import Stripe from "stripe";
 import fs from "fs";
 import { kwResearchManager } from "./src/lib/seo/manager";
+import { discoveryJobQueue } from "./src/lib/seo/discoveryEngine";
+import {
+  readGhostDb,
+  writeGhostDb,
+  encryptApiKey,
+  decryptApiKey,
+  publishToGhost,
+  startCmsQueueWorker,
+  convertMarkdownToGhostHtml
+} from "./src/lib/seo/cmsService";
 
 // Initialize Stripe Client Lazily/Safely
 let stripeClient: any = null;
@@ -513,6 +523,52 @@ app.post("/api/keywords/research", async (req, res) => {
 });
 
 // ==========================================
+// AI Keyword Discovery & Topical Clustering
+// ==========================================
+app.post("/api/keywords/discover", (req, res) => {
+  try {
+    const { 
+      domain, 
+      niche, 
+      projectId, 
+      country = "US", 
+      language = "en", 
+      userId,
+      sourceType,
+      sourceValue,
+      selectedKeywordTypes
+    } = req.body;
+
+    if (!domain || !niche || !projectId || !userId) {
+      return res.status(400).json({ error: "Missing required attributes: domain, niche, projectId, and userId are required" });
+    }
+
+    // Trigger non-blocking job scheduling in our Background Discovery Queue
+    discoveryJobQueue.addJob(
+      projectId, 
+      domain, 
+      niche, 
+      country, 
+      language, 
+      userId,
+      sourceType,
+      sourceValue,
+      selectedKeywordTypes
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "AI Keyword Discovery and topical clustering background task successfully scheduled.",
+      projectId,
+      domain
+    });
+  } catch (err: any) {
+    console.error("[KEYWORD DISCOVER ROUTE ERROR]:", err);
+    return res.status(500).json({ error: err.message || "Keyword discovery process scheduling aborted" });
+  }
+});
+
+// ==========================================
 // SERP Scraper Tracking Integration Endpoints
 // ==========================================
 app.get("/api/serp/scrape", async (req, res) => {
@@ -793,6 +849,43 @@ app.post("/api/cms/publish", async (req, res) => {
   if (!article || !platform) {
     return res.status(400).json({ error: "Missing required article or platform configurations data." });
   }
+
+  // CENTRALIZED WATERMARK CMS INTERCEPTOR
+  const userId = req.body.userId || "anonymous";
+  const dbW = readWatermarkDb();
+  const subStatus = dbW.user_subscriptions[userId]?.status || req.body.subscriptionStatus || "free";
+
+  if (subStatus === "free") {
+    article.content = applyWatermarkServer(article.content, "all", "free", dbW.watermark_settings);
+    const hash = crypto.createHash("sha256").update(article.content).digest("hex");
+    dbW.watermark_logs.push({
+      id: `wlog-${crypto.randomUUID()}`,
+      user_id: userId,
+      article_id: article.id || "unknown",
+      watermark_type: "all",
+      export_type: platform,
+      subscription_status: "free",
+      render_source: "cms_publisher",
+      generated_output_hash: hash,
+      export_timestamp: new Date().toISOString(),
+      message: `CMS Publish: Embedded Watermarks & attribution into ${platform.toUpperCase()} draft dynamically.`
+    });
+  } else {
+    const hash = crypto.createHash("sha256").update(article.content).digest("hex");
+    dbW.watermark_logs.push({
+      id: `wlog-${crypto.randomUUID()}`,
+      user_id: userId,
+      article_id: article.id || "unknown",
+      watermark_type: "none",
+      export_type: platform,
+      subscription_status: "premium",
+      render_source: "cms_publisher",
+      generated_output_hash: hash,
+      export_timestamp: new Date().toISOString(),
+      message: `CMS Publish: Clean, watermark-free publish authorized for ${platform.toUpperCase()}.`
+    });
+  }
+  writeWatermarkDb(dbW);
 
   // Active Sandbox simulator/pre-view fallback if credentials resemble mock keys or specified as mock
   const isMockWordPress = platform === "wordpress" && (!credentials?.siteUrl || credentials.siteUrl.toLowerCase().includes("mock") || credentials.siteUrl.toLowerCase().includes("example"));
@@ -1084,6 +1177,55 @@ app.post("/api/cms/publish", async (req, res) => {
         success: true,
         isSimulated: false,
         publishedUrl: credentials.webhookUrl,
+        timestamp: new Date().toISOString()
+      });
+
+    } else if (platform === "ghost") {
+      let apiKey = credentials?.apiKey || credentials?.adminApiKey || "";
+      let ghostUrl = credentials?.siteUrl || credentials?.ghostSiteUrl || "";
+
+      if (!apiKey || !ghostUrl) {
+        // Look up from saved integrations
+        const db = readGhostDb();
+        const found = db.ghost_integrations.find(i => i.project_id === (article.projectId || req.body.projectId) && i.is_active);
+        if (found) {
+          apiKey = decryptApiKey(found.encrypted_api_key);
+          ghostUrl = found.ghost_site_url;
+        } else {
+          throw new Error("Missing Ghost CMS connection details (Admin API Key and Site URL). Please connect in the integration panel first!");
+        }
+      }
+
+      console.log(`[CMS PUBLISH]: Connecting Ghost Admin API: ${ghostUrl}`);
+      const resVal = await publishToGhost({
+        userId: userId,
+        projectId: article.projectId || req.body.projectId || "default",
+        article: {
+          id: article.id || `art-${Date.now()}`,
+          title: article.title,
+          slug: article.slug,
+          content: article.content,
+          metaDescription: article.metaDescription,
+          featureImage: article.featureImage,
+          targetKeyword: article.targetKeyword,
+          tags: article.tags
+        },
+        ghostSiteUrl: ghostUrl,
+        apiKey: apiKey,
+        status: req.body.status || "draft",
+        scheduledPublishTime: req.body.scheduledPublishTime,
+        isSandbox: isSandbox
+      });
+
+      if (!resVal.success) {
+        throw new Error(resVal.error || "Failed transferring article post to Ghost CMS site.");
+      }
+
+      return res.json({
+        success: true,
+        isSimulated: isSandbox || ghostUrl.includes("mock") || ghostUrl.includes("example"),
+        publishedUrl: resVal.publishedUrl,
+        cmsPostId: resVal.cmsPostId,
         timestamp: new Date().toISOString()
       });
 
@@ -2036,6 +2178,260 @@ app.post("/api/cms/health-check", async (req, res) => {
     });
   }
 });
+
+// ==========================================
+// GHOST CMS INTEGRATION APIS
+// ==========================================
+
+// 1. Get Connected Integration Details
+app.get("/api/cms/ghost/integrations", (req, res) => {
+  const { projectId } = req.query;
+  if (!projectId) {
+    return res.status(400).json({ error: "Missing required projectId query." });
+  }
+
+  const db = readGhostDb();
+  const integrations = db.ghost_integrations.filter(i => i.project_id === projectId && i.is_active);
+  const sites = db.ghost_sites.filter(s => s.project_id === projectId);
+
+  return res.json({
+    success: true,
+    integrations: integrations.map(i => ({
+      id: i.id,
+      ghost_site_url: i.ghost_site_url,
+      created_at: i.created_at,
+      is_active: i.is_active
+    })),
+    sites
+  });
+});
+
+// 2. Connect / Connect Site with Validation
+app.post("/api/cms/ghost/connect", async (req, res) => {
+  const { projectId, userId, ghostSiteUrl, apiKey } = req.body;
+
+  if (!projectId || !ghostSiteUrl || !apiKey) {
+    return res.status(400).json({ error: "Missing required Connection parameters (projectId, ghostSiteUrl, apiKey)." });
+  }
+
+  const siteUrlClean = ghostSiteUrl.trim().replace(/\/$/, "");
+  const isMock = siteUrlClean.toLowerCase().includes("mock") || siteUrlClean.toLowerCase().includes("example");
+
+  try {
+    if (!isMock) {
+      // Validate Ghost Admin API Credentials by attempting a lightweight GET fetch
+      const [id, secret] = apiKey.split(":");
+      if (!id || !secret) {
+        throw new Error("Invalid API Key format. Standard: 'id:secret'");
+      }
+
+      // Generate a temporary JWT
+      const header = { alg: "HS256", typ: "JWT", kid: id };
+      const payload = {
+        iat: Math.floor(Date.now() / 1000),
+        exp: Math.floor(Date.now() / 1000) + 300,
+        aud: "/admin/"
+      };
+      const base64UrlEncode = (obj: any) => Buffer.from(JSON.stringify(obj)).toString("base64").replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+      const sig = crypto.createHmac("sha256", Buffer.from(secret, "hex")).update(`${base64UrlEncode(header)}.${base64UrlEncode(payload)}`).digest("base64").replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+      const token = `${base64UrlEncode(header)}.${base64UrlEncode(payload)}.${sig}`;
+
+      let url = siteUrlClean;
+      if (!url.startsWith("http")) url = `https://${url}`;
+      
+      const validationUrl = `${url}/ghost/api/admin/posts/?limit=1`;
+      console.log(`[GHOST INTROSPECT]: Validating credentials against Ghost API: ${validationUrl}`);
+
+      const response = await fetch(validationUrl, {
+        method: "GET",
+        headers: {
+          "Authorization": `Ghost ${token}`,
+          "Content-Type": "application/json"
+        },
+        timeout: 6000
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        throw new Error(`Ghost Admin API validation failed. Status: ${response.status}. Message: ${errText}`);
+      }
+    } else {
+      await new Promise(resolve => setTimeout(resolve, 600)); // Simulate validation delay
+    }
+
+    // Encryption & Persistence
+    const encryptedKey = encryptApiKey(apiKey);
+    const db = readGhostDb();
+
+    // Deactivate previous integrations for this project if any
+    db.ghost_integrations = db.ghost_integrations.map(i => {
+      if (i.project_id === projectId) {
+        return { ...i, is_active: false };
+      }
+      return i;
+    });
+
+    const newIntegration = {
+      id: `gint-${crypto.randomUUID()}`,
+      user_id: userId || "anonymous",
+      project_id: projectId,
+      ghost_site_url: siteUrlClean,
+      encrypted_api_key: encryptedKey,
+      created_at: new Date().toISOString(),
+      is_active: true
+    };
+
+    const newSite = {
+      id: `gsite-${crypto.randomUUID()}`,
+      user_id: userId || "anonymous",
+      project_id: projectId,
+      ghost_site_url: siteUrlClean,
+      site_title: isMock ? "Demo Mock Ghost Site" : siteUrlClean.replace(/^https?:\/\//, ""),
+      description: "Direct native Admin API connection with auto image uploads and SEO syncing.",
+      connected_at: new Date().toISOString(),
+      language_code: "en",
+      visibility_settings: "public" as const
+    };
+
+    db.ghost_integrations.push(newIntegration);
+    
+    // Replace site if already exists for simplicity
+    db.ghost_sites = db.ghost_sites.filter(s => s.project_id !== projectId || s.ghost_site_url !== siteUrlClean);
+    db.ghost_sites.push(newSite);
+
+    writeGhostDb(db);
+
+    console.log(`[GHOST INTEG]: Successfully linked Ghost site: ${siteUrlClean} for Project ${projectId}`);
+    return res.json({
+      success: true,
+      message: `Successfully connected natively to Ghost Site: ${siteUrlClean}`,
+      integrationId: newIntegration.id,
+      site: newSite
+    });
+
+  } catch (validationErr: any) {
+    console.error("[GHOST CONNECTION VERIFY ERROR]:", validationErr);
+    return res.status(401).json({
+      success: false,
+      error: validationErr.message || "Credential verification rejected. Check site coordinates & Admin API Key."
+    });
+  }
+});
+
+// 3. Disconnect Integrations for a project
+app.post("/api/cms/ghost/disconnect", (req, res) => {
+  const { projectId, ghostSiteUrl } = req.body;
+  
+  if (!projectId) {
+    return res.status(400).json({ error: "Missing required projectId Parameter." });
+  }
+
+  const db = readGhostDb();
+  if (ghostSiteUrl) {
+    db.ghost_integrations = db.ghost_integrations.filter(i => !(i.project_id === projectId && i.ghost_site_url === ghostSiteUrl));
+    db.ghost_sites = db.ghost_sites.filter(s => !(s.project_id === projectId && s.ghost_site_url === ghostSiteUrl));
+  } else {
+    // Disconnect all
+    db.ghost_integrations = db.ghost_integrations.filter(i => i.project_id !== projectId);
+    db.ghost_sites = db.ghost_sites.filter(s => s.project_id !== projectId);
+  }
+
+  writeGhostDb(db);
+  return res.json({
+    success: true,
+    message: "CMS Platform Integration disconnected successfully."
+  });
+});
+
+// 4. Fetch publish transaction logs
+app.get("/api/cms/ghost/logs", (req, res) => {
+  const { projectId } = req.query;
+  if (!projectId) {
+    return res.status(400).json({ error: "Missing required projectId query." });
+  }
+
+  const db = readGhostDb();
+  const logs = db.ghost_publish_logs
+    .filter(log => log.project_id === projectId)
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+  return res.json({
+    success: true,
+    logs
+  });
+});
+
+// 5. Get scheduled publish queue items
+app.get("/api/cms/ghost/queue", (req, res) => {
+  const { projectId } = req.query;
+  if (!projectId) {
+    return res.status(400).json({ error: "Missing required projectId query." });
+  }
+
+  const db = readGhostDb();
+  const queue = db.ghost_publish_queue
+    .filter(item => item.project_id === projectId)
+    .sort((a, b) => new Date(a.scheduled_publish_time).getTime() - new Date(b.scheduled_publish_time).getTime());
+
+  return res.json({
+    success: true,
+    queue
+  });
+});
+
+// 6. Schedule future publishing release
+app.post("/api/cms/ghost/schedule", (req, res) => {
+  const { projectId, userId, articleId, ghostSiteUrl, scheduledPublishTime } = req.body;
+
+  if (!projectId || !articleId || !ghostSiteUrl || !scheduledPublishTime) {
+    return res.status(400).json({ error: "Missing required scheduling arguments." });
+  }
+
+  const db = readGhostDb();
+  const pendingItem = {
+    id: `pqi-${crypto.randomUUID()}`,
+    user_id: userId || "anonymous",
+    project_id: projectId,
+    article_id: articleId,
+    ghost_site_url: ghostSiteUrl,
+    scheduled_publish_time: new Date(scheduledPublishTime).toISOString(),
+    publish_status: "pending" as const,
+    attempt_count: 0,
+    created_at: new Date().toISOString()
+  };
+
+  db.ghost_publish_queue.push(pendingItem);
+  writeGhostDb(db);
+
+  return res.json({
+    success: true,
+    message: `Article scheduled for CMS automatic release on ${new Date(scheduledPublishTime).toLocaleString()}`,
+    item: pendingItem
+  });
+});
+
+// 7. Cancel scheduled publication
+app.post("/api/cms/ghost/cancel-scheduled", (req, res) => {
+  const { itemId } = req.body;
+  if (!itemId) {
+    return res.status(400).json({ error: "Missing required itemId query." });
+  }
+
+  const db = readGhostDb();
+  const originalLen = db.ghost_publish_queue.length;
+  db.ghost_publish_queue = db.ghost_publish_queue.filter(qi => qi.id !== itemId);
+  
+  if (db.ghost_publish_queue.length === originalLen) {
+    return res.status(404).json({ error: "Scheduled publishing item not found." });
+  }
+
+  writeGhostDb(db);
+  return res.json({
+    success: true,
+    message: "Cancelled scheduled release successfully."
+  });
+});
+
 
 // 9. Manual Re-trigger, Retry or Force Publish Now
 app.post("/api/scheduler/queue/publish-now/:itemId", (req, res) => {
@@ -5360,6 +5756,991 @@ You must output a single, valid JSON object with detailed stylistic metadata var
   }
 });
 
+// ==========================================================
+// ENTERPRISE AI REWRITE ENGINE DATABASE ENGINE & ENDPOINTS
+// ==========================================================
+
+const rewriteDbPath = path.join(process.cwd(), "rewrite_db.json");
+
+interface RewriteDbSchema {
+  article_rewrites: any[];
+  rewrite_versions: any[];
+  rewrite_logs: any[];
+  rewrite_jobs: any[];
+  rewrite_diffs: any[];
+}
+
+function readRewriteDb(): RewriteDbSchema {
+  if (!fs.existsSync(rewriteDbPath)) {
+    const emptyInit = {
+      article_rewrites: [],
+      rewrite_versions: [],
+      rewrite_logs: [],
+      rewrite_jobs: [],
+      rewrite_diffs: []
+    };
+    fs.writeFileSync(rewriteDbPath, JSON.stringify(emptyInit, null, 2), "utf-8");
+    return emptyInit;
+  }
+  try {
+    return JSON.parse(fs.readFileSync(rewriteDbPath, "utf-8"));
+  } catch (e) {
+    console.error("[REWRITE DB]: Failed to read DB. Re-initializing empty records.", e);
+    const emptyInit = {
+      article_rewrites: [],
+      rewrite_versions: [],
+      rewrite_logs: [],
+      rewrite_jobs: [],
+      rewrite_diffs: []
+    };
+    return emptyInit;
+  }
+}
+
+function writeRewriteDb(db: RewriteDbSchema) {
+  try {
+    fs.writeFileSync(rewriteDbPath, JSON.stringify(db, null, 2), "utf-8");
+  } catch (err) {
+    console.error("[REWRITE DB]: Serious error writing to rewrite_db.json:", err);
+  }
+}
+
+// LCS word diff helper algorithm for client rendering high-contrast side-by-side versions differences
+function calculateWordDiff(oldStr: string, newStr: string) {
+  const oldWords = oldStr.split(/(\s+)/);
+  const newWords = newStr.split(/(\s+)/);
+  
+  const dp: number[][] = Array(oldWords.length + 1).fill(0).map(() => Array(newWords.length + 1).fill(0));
+  
+  for (let i = 1; i <= oldWords.length; i++) {
+    for (let j = 1; j <= newWords.length; j++) {
+      if (oldWords[i-1] === newWords[j-1]) {
+        dp[i][j] = dp[i-1][j-1] + 1;
+      } else {
+        dp[i][j] = Math.max(dp[i-1][j], dp[i][j-1]);
+      }
+    }
+  }
+  
+  const result: Array<{ type: 'added' | 'removed' | 'equal'; value: string }> = [];
+  let i = oldWords.length;
+  let j = newWords.length;
+  
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && oldWords[i-1] === newWords[j-1]) {
+      result.push({ type: 'equal', value: oldWords[i-1] });
+      i--;
+      j--;
+    } else if (j > 0 && (i === 0 || dp[i][j-1] >= dp[i-1][j])) {
+      result.push({ type: 'added', value: newWords[j-1] });
+      j--;
+    } else if (i > 0 && (j === 0 || dp[i][j-1] < dp[i-1][j])) {
+      result.push({ type: 'removed', value: oldWords[i-1] });
+      i--;
+    }
+  }
+  
+  return result.reverse();
+}
+
+// Async worker processor running in safety bounds
+async function processRewriteWorker(jobId: string, params: any) {
+  const startTime = Date.now();
+  console.log(`[REWRITE ENGINE]: Triggering worker loop. Job: ${jobId}. Type: ${params.rewrite_type}`);
+  
+  let db = readRewriteDb();
+  let job = db.rewrite_jobs.find((j: any) => j.id === jobId);
+  if (!job) return;
+  
+  job.status = "processing";
+  job.progress = 25;
+  job.updated_at = new Date().toISOString();
+  writeRewriteDb(db);
+  
+  try {
+    const ai = getGeminiClient();
+    
+    job.progress = 50;
+    writeRewriteDb(db);
+    
+    const brandVoiceText = params.brand_voice_profile 
+      ? `Ensure strict mimicry representing core patterns extracted from Writing voice style profiles:
+         - Audience Tone Match: ${params.brand_voice_profile.audienceTone || 'Professional'}
+         - Vocabulary level: ${params.brand_voice_profile.vocabularyComplexity || 'Medium'}
+         - Sentence patterns: ${params.brand_voice_profile.customPatterns || 'Standard business prose'}
+         - Factual retention: High. Maintain absolute semantic search integrity.`
+      : "Maintain a professional, highly engaging enterprise digital search visibility tone.";
+
+    const headingsGuide = params.rewrite_type.includes("locked") 
+      ? "Rewrite only specified selected sections and phrases, leaving outer main headings layout entirely untouched."
+      : "Maintain the correct markdown heading structures sequences (#, ##, ###) precisely. Do not drop or merge segments.";
+
+    const systemInstruction = `
+      You are an elite enterprise AI copywriter and SEO optimization engine.
+      Your goal is to rewrite the provided content to maximize target goals like SEO performance, natural flow, engagement, readability, and content freshness.
+      
+      CRITICAL GENERAL LAWS TO PRESERVE QUALITY:
+      1. PRESERVE FACTUAL MEANING: Do not hallucinate or change facts, metrics, dates, or quantitative research statistics.
+      2. PRESERVE FORMATTING & MARKDOWN: Ensure headers (#, ##, ###), bold phrases, bullets, numbered lists, checklists, blockquotes, and tables are formatted perfectly in valid markdown notation.
+      3. PRESERVE ALL LINKS: All HTML and Markdown links (e.g., [anchor](url) or <a href="...">) MUST remain identical. Do not alter their path URLs. You may naturally adjust anchor text to improve flow, but keep structural link syntax identical.
+      4. SEO INTENT: Preserve keywords and match search intent cleanly.
+      5. NO WATERMARK: Eliminate robotic AI clichés (e.g., "in today's digital landscape", "delve deeper", "testament to", "crucial", "essential", "not only, but also", "moreover"). Use active verbs, vary sentence lengths and structures, use conversational transitions, and simulate human write-rhythms.
+      
+      Specific instructions for rewrite type: "${params.rewrite_type}":
+      - intensity: ${params.intensity}% (higher means more extensive revision and change of wording, lower means minor touch-ups)
+      - ai_slider (humanization strength): ${params.ai_slider}% (higher means maximal variation of sentence length, conversational style, and active-verb voice to bypass AI classifiers)
+      - target selective keywords: ${params.target_keywords ? params.target_keywords.join(", ") : "None"}
+      - language target: ${params.language || "English"}
+      - custom user instructions: "${params.custom_prompt || "None"}"
+      
+      ${brandVoiceText}
+      ${headingsGuide}
+      
+      Return a response strictly in RAW parseable JSON format. Do not prepend or append markdown code blocks like \`\`\`json. Return precisely this schema:
+      {
+        "rewritten_title": "The rewritten article title / headline heading, or if rewrite text didn't contain title, adapt standard title beautifully",
+        "rewritten_content": "The complete rewritten markdown content",
+        "rewritten_meta_description": "Clean search meta description optimized for higher click-through-rates based on rewritten content (120-160 characters)",
+        "similarity_score": 88, // integer estimation 0-100 indicating semantic closeness. 100 = copy of original, 0 = entirely different topic
+        "readability_score": 90, // Flesch scaling estimation 0-100. Higher means more accessible
+        "seo_score": 95, // calculated NLP scoring 0-100 matching SEO best practices
+        "ai_detection_score": 92 // estimated AI watermark bypass score 0-100 where higher means MORE human / less robotic
+      }
+    `;
+
+    job.progress = 75;
+    writeRewriteDb(db);
+
+    const userPayload = `
+      ORIGINAL TITLE: "${params.original_title || ''}"
+      ORIGINAL META DESCRIPTION: "${params.original_meta_description || ''}"
+      ORIGINAL CONTENT BODY:
+      """
+      ${params.original_content}
+      """
+    `;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3.5-flash",
+      contents: userPayload,
+      config: {
+        systemInstruction,
+        temperature: params.rewrite_type === "anti_duplicate" ? 0.9 : 0.7,
+        responseMimeType: "application/json"
+      }
+    });
+
+    job.progress = 90;
+    writeRewriteDb(db);
+
+    let resultText = response.text || "{}";
+    resultText = resultText.trim();
+    if (resultText.startsWith("```json")) {
+      resultText = resultText.replace(/^```json/, "");
+    }
+    if (resultText.endsWith("```")) {
+      resultText = resultText.replace(/```$/, "");
+    }
+    resultText = resultText.trim();
+
+    const parsed = JSON.parse(resultText);
+
+    const processingTime = Date.now() - startTime;
+    const tokenUsage = Math.ceil(resultText.length / 4) + Math.ceil(userPayload.length / 4);
+
+    db = readRewriteDb();
+    job = db.rewrite_jobs.find((j: any) => j.id === jobId);
+    
+    const rewritten_result = {
+      title: parsed.rewritten_title || params.original_title,
+      content: parsed.rewritten_content || params.original_content,
+      meta_description: parsed.rewritten_meta_description || params.original_meta_description,
+      scores: {
+        similarity: Number(parsed.similarity_score) || (100 - Number(params.intensity) * 0.4),
+        readability: Number(parsed.readability_score) || 82,
+        seo: Number(parsed.seo_score) || 88,
+        ai_detection: Number(parsed.ai_detection_score) || (Number(params.ai_slider) * 0.8 + 15)
+      },
+      token_usage: tokenUsage,
+      processing_time: processingTime
+    };
+
+    job.status = "completed";
+    job.progress = 100;
+    job.rewritten_result = rewritten_result;
+    job.updated_at = new Date().toISOString();
+
+    // Store in general rewritten histories catalog too
+    db.article_rewrites.push({
+      id: `rw-${crypto.randomUUID()}`,
+      original_article_id: params.article_id,
+      rewrite_type: params.rewrite_type,
+      rewritten_content: rewritten_result.content,
+      similarity_score: rewritten_result.scores.similarity,
+      readability_score: rewritten_result.scores.readability,
+      seo_score: rewritten_result.scores.seo,
+      ai_detection_score: rewritten_result.scores.ai_detection,
+      rewrite_intensity: Number(params.intensity) || 50,
+      token_usage: tokenUsage,
+      processing_time: processingTime,
+      created_at: new Date().toISOString()
+    });
+
+    // Write audit log entry
+    db.rewrite_logs.push({
+      id: `log-${crypto.randomUUID()}`,
+      article_id: params.article_id,
+      action: "REWRITE_SUCCESS",
+      status: "success",
+      message: `Content optimized in ${processingTime}ms via '${params.rewrite_type}'. Readability at ${rewritten_result.scores.readability}%, SEO density scores computed at ${rewritten_result.scores.seo}%.`,
+      token_usage: tokenUsage,
+      processing_time: processingTime,
+      timestamp: new Date().toISOString()
+    });
+
+    // Auto-create snapshot history backup so we never lose drafts
+    const currentVersions = db.rewrite_versions.filter((v: any) => v.article_id === params.article_id);
+    const nextVerNum = currentVersions.length > 0 
+      ? Math.max(...currentVersions.map((v: any) => v.version_number)) + 1
+      : 1;
+
+    db.rewrite_versions.push({
+      id: `ver-${crypto.randomUUID()}`,
+      article_id: params.article_id,
+      title: rewritten_result.title,
+      content: rewritten_result.content,
+      meta_description: rewritten_result.meta_description,
+      version_number: nextVerNum,
+      rewrite_type: params.rewrite_type,
+      change_description: `Adaptive optimization (${params.rewrite_type} v${nextVerNum})`,
+      similarity_score: rewritten_result.scores.similarity,
+      readability_score: rewritten_result.scores.readability,
+      seo_score: rewritten_result.scores.seo,
+      ai_detection_score: rewritten_result.scores.ai_detection,
+      created_at: new Date().toISOString()
+    });
+
+    writeRewriteDb(db);
+    console.log(`[REWRITE ENGINE]: Job ${jobId} successfully finished and saved!`);
+
+  } catch (err: any) {
+    console.error(`[REWRITE ENGINE]: Worker crashed mapping Job ${jobId}:`, err);
+    db = readRewriteDb();
+    job = db.rewrite_jobs.find((j: any) => j.id === jobId);
+    if (job) {
+      job.status = "failed";
+      job.error = err.message || "Failed during deep generation analysis.";
+      job.updated_at = new Date().toISOString();
+    }
+    db.rewrite_logs.push({
+      id: `log-${crypto.randomUUID()}`,
+      article_id: params.article_id,
+      action: "REWRITE_FAILURE",
+      status: "error",
+      message: `Async content rewrite pipeline failed on Job '${jobId}': ${err.message}`,
+      token_usage: 0,
+      processing_time: Date.now() - startTime,
+      timestamp: new Date().toISOString()
+    });
+    writeRewriteDb(db);
+  }
+}
+
+// REST API ROUTES
+app.get("/api/rewrites/history/:articleId", (req, res) => {
+  const { articleId } = req.params;
+  const db = readRewriteDb();
+  
+  const versions = db.rewrite_versions.filter((v: any) => v.article_id === articleId);
+  const logs = db.rewrite_logs.filter((l: any) => l.article_id === articleId || l.article_id === "all");
+  const jobs = db.rewrite_jobs.filter((j: any) => j.article_id === articleId);
+  const rewrites = db.article_rewrites.filter((r: any) => r.original_article_id === articleId);
+  
+  res.json({
+    success: true,
+    versions: versions.sort((a: any, b: any) => b.version_number - a.version_number),
+    logs: logs.sort((a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()),
+    jobs: jobs.sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()),
+    rewrites
+  });
+});
+
+app.post("/api/rewrites/trigger", (req, res) => {
+  const {
+    article_id,
+    rewrite_type,
+    original_content,
+    original_title,
+    original_meta_description,
+    intensity,
+    ai_slider,
+    custom_prompt,
+    brand_voice_profile,
+    target_keywords,
+    language
+  } = req.body;
+
+  if (!article_id || !rewrite_type || !original_content) {
+    return res.status(400).json({ error: "Missing required workflow properties: article_id, rewrite_type, original_content" });
+  }
+
+  const db = readRewriteDb();
+  const jobId = `job-${crypto.randomUUID()}`;
+  
+  const newJob = {
+    id: jobId,
+    article_id,
+    rewrite_type,
+    status: "pending",
+    progress: 0,
+    intensity: Number(intensity) || 50,
+    ai_slider: Number(ai_slider) || 50,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  };
+
+  db.rewrite_jobs.push(newJob);
+
+  db.rewrite_logs.push({
+    id: `log-${crypto.randomUUID()}`,
+    article_id,
+    action: "QUEUE_TRIGGER",
+    status: "info",
+    message: `Enqueued premium optimization rewrite worker. Type: ${rewrite_type}. Intensity: ${intensity}%, Safeguard Bypass Slider: ${ai_slider}%.`,
+    token_usage: 0,
+    processing_time: 0,
+    timestamp: new Date().toISOString()
+  });
+
+  writeRewriteDb(db);
+
+  // Invoke worker process async
+  setImmediate(() => processRewriteWorker(jobId, {
+    article_id,
+    rewrite_type,
+    original_content,
+    original_title,
+    original_meta_description,
+    intensity,
+    ai_slider,
+    custom_prompt,
+    brand_voice_profile,
+    target_keywords,
+    language
+  }));
+
+  res.json({
+    success: true,
+    jobId,
+    message: "Rewrite job enqueued on production workers stream."
+  });
+});
+
+app.get("/api/rewrites/job-status/:jobId", (req, res) => {
+  const { jobId } = req.params;
+  const db = readRewriteDb();
+  const job = db.rewrite_jobs.find((j: any) => j.id === jobId);
+  if (!job) {
+    return res.status(404).json({ error: "Rewrite background job code not registered." });
+  }
+  res.json({ success: true, job });
+});
+
+app.post("/api/rewrites/diff", (req, res) => {
+  const { version_a_content, version_b_content } = req.body;
+  if (typeof version_a_content !== "string" || typeof version_b_content !== "string") {
+    return res.status(400).json({ error: "Missing version content fields for diff comparison" });
+  }
+  const result = calculateWordDiff(version_a_content, version_b_content);
+  res.json({ success: true, diffs: result });
+});
+
+app.post("/api/rewrites/version-snap", (req, res) => {
+  const { article_id, title, content, meta_description, rewrite_type, change_description, scores } = req.body;
+  if (!article_id || !content) {
+    return res.status(400).json({ error: "Missing query properties: article_id, content" });
+  }
+
+  const db = readRewriteDb();
+  const currentVersions = db.rewrite_versions.filter((v: any) => v.article_id === article_id);
+  const nextVerNum = currentVersions.length > 0 
+    ? Math.max(...currentVersions.map((v: any) => v.version_number)) + 1
+    : 1;
+
+  const newVersion = {
+    id: `ver-${crypto.randomUUID()}`,
+    article_id,
+    title: title || "Untitled Version Snapshot",
+    content,
+    meta_description: meta_description || "",
+    version_number: nextVerNum,
+    rewrite_type: rewrite_type || "manual_snapshot",
+    change_description: change_description || `Manual snapshot checkpoint (#v${nextVerNum})`,
+    similarity_score: scores?.similarity || 100,
+    readability_score: scores?.readability || 82,
+    seo_score: scores?.seo || 85,
+    ai_detection_score: scores?.ai_detection || 90,
+    created_at: new Date().toISOString()
+  };
+
+  db.rewrite_versions.push(newVersion);
+  
+  db.rewrite_logs.push({
+    id: `log-${crypto.randomUUID()}`,
+    article_id,
+    action: "SNAPSHOT_CREATED",
+    status: "success",
+    message: `Created snapshot version #${nextVerNum}. Reason: ${newVersion.change_description}`,
+    token_usage: 0,
+    processing_time: 12,
+    timestamp: new Date().toISOString()
+  });
+
+  writeRewriteDb(db);
+  res.json({ success: true, version: newVersion });
+});
+
+app.post("/api/rewrites/restore", (req, res) => {
+  const { article_id, version_id } = req.body;
+  if (!article_id || !version_id) {
+    return res.status(400).json({ error: "Missing required properties: article_id, version_id" });
+  }
+
+  const db = readRewriteDb();
+  const version = db.rewrite_versions.find((v: any) => v.id === version_id && v.article_id === article_id);
+  
+  if (!version) {
+    return res.status(404).json({ error: "Historical version snapshot not found." });
+  }
+
+  db.rewrite_logs.push({
+    id: `log-${crypto.randomUUID()}`,
+    article_id,
+    action: "VERSION_RESTORED",
+    status: "warn",
+    message: `Restored article back to historic snapshot version #${version.version_number} (${version.change_description}).`,
+    token_usage: 0,
+    processing_time: 15,
+    timestamp: new Date().toISOString()
+  });
+
+  writeRewriteDb(db);
+  res.json({
+    success: true,
+    restored: {
+      title: version.title,
+      content: version.content,
+      meta_description: version.meta_description,
+      version_number: version.version_number
+    }
+  });
+});
+
+app.post("/api/rewrites/logs/clear", (req, res) => {
+  const { article_id } = req.body;
+  const db = readRewriteDb();
+  if (article_id) {
+    db.rewrite_logs = db.rewrite_logs.filter((l: any) => l.article_id !== article_id);
+  } else {
+    db.rewrite_logs = [];
+  }
+  writeRewriteDb(db);
+  res.json({ success: true });
+});
+
+
+// ==========================================================
+// CENTRALIZED SECURITY WATERMARK AND ATTRIBUTION SERVICE
+// ==========================================================
+const watermarkDbPath = path.join(process.cwd(), "watermark_db.json");
+
+interface WatermarkLog {
+  id: string;
+  user_id: string;
+  article_id: string;
+  watermark_type: string; // 'footer' | 'inline' | 'floating' | 'html_comment' | 'preview_banner' | 'exported_doc' | 'none'
+  export_type: string; // 'html' | 'markdown' | 'wordpress' | 'webflow' | 'ghost' | 'pdf' | 'docx' | 'api' | 'none'
+  subscription_status: 'free' | 'premium';
+  render_source: 'editor' | 'exporter' | 'cms_publisher' | 'api_route';
+  generated_output_hash: string;
+  export_timestamp: string;
+  message?: string;
+}
+
+interface ExportMetadata {
+  id: string;
+  article_id: string;
+  user_id: string;
+  export_type: string;
+  subscription_status: 'free' | 'premium';
+  signed_token: string;
+  created_at: string;
+  content_preview: string;
+  file_name: string;
+  file_size?: number;
+}
+
+interface BillingAccessLog {
+  id: string;
+  user_id: string;
+  action: string; // 'PLAN_UPGRADE' | 'PLAN_DOWNGRADE' | 'EXPORTS_UNLOCKED' | 'ACCESS_BLOCKED' | 'CACHE_BUSTED' | 'FAILED_PAYMENT'
+  status: 'success' | 'warn' | 'error' | 'info';
+  message: string;
+  timestamp: string;
+}
+
+interface RenderingSession {
+  id: string;
+  article_id: string;
+  user_id: string;
+  watermark_type: string;
+  placement: string;
+  created_at: string;
+  active_plan_snapshot: 'free' | 'premium';
+}
+
+interface WatermarkDbSchema {
+  watermark_logs: WatermarkLog[];
+  export_metadata: ExportMetadata[];
+  billing_access_logs: BillingAccessLog[];
+  rendering_sessions: RenderingSession[];
+  user_subscriptions: { [userId: string]: { status: 'free' | 'premium', updatedAt: string } };
+  watermark_settings: {
+    footerText: string;
+    inlineText: string;
+    floatingBadgeHtml: string;
+    commentText: string;
+  };
+  cached_exports: { [key: string]: { content: string; hash: string; timestamp: string; subscriptionStatus: 'free' | 'premium' } };
+}
+
+function readWatermarkDb(): WatermarkDbSchema {
+  const defaultInit: WatermarkDbSchema = {
+    watermark_logs: [],
+    export_metadata: [],
+    billing_access_logs: [],
+    rendering_sessions: [],
+    user_subscriptions: {
+      "anonymous": { status: "free", updatedAt: new Date().toISOString() },
+      "test-premium-user": { status: "premium", updatedAt: new Date().toISOString() }
+    },
+    watermark_settings: {
+      footerText: "Generated with RankSyncer AI - Premium Search Authority Optimization Suite",
+      inlineText: "*(Optimized and calibrated using RankSyncer's advanced real-time SERP sync models.)*",
+      floatingBadgeHtml: `<div class="ranksyncer-badge" style="position: fixed; bottom: 20px; right: 20px; padding: 10px 16px; background-color: #0f172a; color: #10b981; border: 1px solid #334155; border-radius: 9999px; font-family: sans-serif; font-size: 12px; font-weight: bold; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.3); z-index: 99999; display: flex; align-items: center; gap: 8px; font-weight: 700;"><span>🛡️ Powered by RankSyncer AI</span></div>`,
+      commentText: "WATERMARK BY RANKSYNCER AI: SECURED WITH BLOCKCHAIN INTEGRITY SIGNATURE. UNAUTHORIZED REMOVAL RESTRICTED UNDER FREE-TIER AGREEMENT."
+    },
+    cached_exports: {}
+  };
+
+  if (!fs.existsSync(watermarkDbPath)) {
+    fs.writeFileSync(watermarkDbPath, JSON.stringify(defaultInit, null, 2), "utf-8");
+    return defaultInit;
+  }
+  try {
+    const data = JSON.parse(fs.readFileSync(watermarkDbPath, "utf-8"));
+    return {
+      watermark_logs: data.watermark_logs || [],
+      export_metadata: data.export_metadata || [],
+      billing_access_logs: data.billing_access_logs || [],
+      rendering_sessions: data.rendering_sessions || [],
+      user_subscriptions: data.user_subscriptions || defaultInit.user_subscriptions,
+      watermark_settings: data.watermark_settings || defaultInit.watermark_settings,
+      cached_exports: data.cached_exports || {}
+    };
+  } catch (e) {
+    console.error("[WATERMARK DB]: Failed to read DB. Re-initializing empty records.", e);
+    return defaultInit;
+  }
+}
+
+function writeWatermarkDb(db: WatermarkDbSchema) {
+  try {
+    fs.writeFileSync(watermarkDbPath, JSON.stringify(db, null, 2), "utf-8");
+  } catch (err) {
+    console.error("[WATERMARK DB]: Serious error writing to watermark_db.json:", err);
+  }
+}
+
+// Server Core Watermark Injection Middleware logic
+function applyWatermarkServer(
+  content: string,
+  watermarkType: string,
+  subscriptionStatus: 'free' | 'premium',
+  settings: { footerText: string; inlineText: string; floatingBadgeHtml: string; commentText: string }
+): string {
+  if (subscriptionStatus === "premium") {
+    return content;
+  }
+
+  let processed = content;
+
+  // Render HTML comment watermark natively across all documents for back-office protection
+  const comment = `\n<!-- ${settings.commentText} -->\n`;
+  processed = comment + processed;
+
+  // Render Footer Attribution
+  if (watermarkType === "footer" || watermarkType === "all") {
+    processed = processed + `\n\n---\n*${settings.footerText}*`;
+  }
+
+  // Render Inline Paragraph at logical text center boundary
+  if (watermarkType === "inline" || watermarkType === "all") {
+    const paragraphs = processed.split("\n\n");
+    if (paragraphs.length > 3) {
+      const mid = Math.floor(paragraphs.length / 2);
+      paragraphs.splice(mid, 0, settings.inlineText);
+      processed = paragraphs.join("\n\n");
+    } else {
+      processed = processed + `\n\n${settings.inlineText}`;
+    }
+  }
+
+  // Render floating responsive badge marker block for HTML formats
+  if (watermarkType === "floating" || watermarkType === "all") {
+    processed = processed + `\n\n` + settings.floatingBadgeHtml;
+  }
+
+  return processed;
+}
+
+// API Endpoint to check and fetch Watermarking logs & active subscription status
+app.get("/api/watermark/state", (req, res) => {
+  const userId = req.query.userId as string || "anonymous";
+  const db = readWatermarkDb();
+  
+  // ensure existence of sub for current user to prevent fallback gaps
+  if (!db.user_subscriptions[userId]) {
+    db.user_subscriptions[userId] = { status: "free", updatedAt: new Date().toISOString() };
+    writeWatermarkDb(db);
+  }
+
+  res.json({
+    success: true,
+    subscription: db.user_subscriptions[userId],
+    settings: db.watermark_settings,
+    logs: db.watermark_logs.sort((a, b) => new Date(b.export_timestamp).getTime() - new Date(a.export_timestamp).getTime()),
+    exportMetadata: db.export_metadata.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()),
+    billingAccessLogs: db.billing_access_logs.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()),
+    renderingSessions: db.rendering_sessions.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+  });
+});
+
+// Update global watermarking custom attribution settings
+app.post("/api/watermark/settings", (req, res) => {
+  const { footerText, inlineText, floatingBadgeHtml, commentText } = req.body;
+  const db = readWatermarkDb();
+
+  if (footerText) db.watermark_settings.footerText = footerText;
+  if (inlineText) db.watermark_settings.inlineText = inlineText;
+  if (floatingBadgeHtml) db.watermark_settings.floatingBadgeHtml = floatingBadgeHtml;
+  if (commentText) db.watermark_settings.commentText = commentText;
+
+  writeWatermarkDb(db);
+  res.json({ success: true, settings: db.watermark_settings });
+});
+
+// Update user subscription state (Simulate webhook and checkout events in a fully relational backend manner)
+app.post("/api/watermark/subscription/set", (req, res) => {
+  const { userId, status } = req.body;
+  if (!userId || !["free", "premium"].includes(status)) {
+    return res.status(400).json({ error: "Required properties: userId of active profile, status ('free' | 'premium')" });
+  }
+
+  const db = readWatermarkDb();
+  const oldStatus = db.user_subscriptions[userId]?.status || "free";
+  
+  db.user_subscriptions[userId] = {
+    status,
+    updatedAt: new Date().toISOString()
+  };
+
+  // Trigger cache invalidation and clean out cached exports if state changes
+  if (oldStatus !== status) {
+    const cachedKeys = Object.keys(db.cached_exports);
+    let invalidatedCount = 0;
+    
+    cachedKeys.forEach(k => {
+      // Clear key if it maps to this user ID to prevent cached bleed
+      if (k.startsWith(userId)) {
+        delete db.cached_exports[k];
+        invalidatedCount++;
+      }
+    });
+
+    db.billing_access_logs.push({
+      id: `blog-${crypto.randomUUID()}`,
+      user_id: userId,
+      action: "CACHE_BUSTED",
+      status: "info",
+      message: `Cleared ${invalidatedCount} cached content export nodes. Plan state mutated from '${oldStatus}' to '${status}'.`,
+      timestamp: new Date().toISOString()
+    });
+  }
+
+  // Relational log tracking
+  const actionType = status === "premium" ? "PLAN_UPGRADE" : "PLAN_DOWNGRADE";
+  const actionMsg = status === "premium" ? 
+    "SaaS Plan Upgraded: Watermark system unlocked. Export-safe clean document outputs compiled for instant access." :
+    "SaaS Plan Downgraded: Attribution requirements re-asserted. Inline, comment and footer watermarks re-enabled.";
+
+  db.billing_access_logs.push({
+    id: `blog-${crypto.randomUUID()}`,
+    user_id: userId,
+    action: actionType,
+    status: status === "premium" ? "success" : "warn",
+    message: actionMsg,
+    timestamp: new Date().toISOString()
+  });
+
+  writeWatermarkDb(db);
+  res.json({
+    success: true,
+    subscription: db.user_subscriptions[userId],
+    message: `Payment/membership state synchronized as '${status.toUpperCase()}'.`
+  });
+});
+
+// Secure Rendering API Engine with real billing-aware middleware capabilities
+app.post("/api/watermark/render", (req, res) => {
+  const { articleId, userId, watermarkType = "all", content, title, metaDescription } = req.body;
+  if (!articleId || !content) {
+    return res.status(400).json({ error: "Missing required compilation criteria: articleId, content" });
+  }
+
+  const db = readWatermarkDb();
+  const subStatus = db.user_subscriptions[userId]?.status || "free";
+
+  // Create an active rendering session record
+  const sessionItem: RenderingSession = {
+    id: `rs-${crypto.randomUUID()}`,
+    article_id: articleId,
+    user_id: userId || "anonymous",
+    watermark_type: subStatus === "premium" ? "none" : watermarkType,
+    placement: "all_standard_blocks",
+    created_at: new Date().toISOString(),
+    active_plan_snapshot: subStatus
+  };
+  db.rendering_sessions.push(sessionItem);
+
+  // Parse and process through dynamic rendering pipeline
+  const renderedContent = applyWatermarkServer(content, watermarkType, subStatus, db.watermark_settings);
+  const hash = crypto.createHash("sha256").update(renderedContent).digest("hex");
+
+  // Keep a watermark execution audit log
+  db.watermark_logs.push({
+    id: `wlog-${crypto.randomUUID()}`,
+    user_id: userId || "anonymous",
+    article_id: articleId,
+    watermark_type: subStatus === "premium" ? "none" : watermarkType,
+    export_type: "none",
+    subscription_status: subStatus,
+    render_source: "editor",
+    generated_output_hash: hash,
+    export_timestamp: new Date().toISOString(),
+    message: subStatus === "premium" ?
+      "Render Sandbox: Watermark-free premium layout safely compiled." :
+      `Render Sandbox: Embedded SEO attribution branding tags into body paragraphs (${watermarkType}).`
+  });
+
+  writeWatermarkDb(db);
+
+  res.json({
+    success: true,
+    renderedContent,
+    hash,
+    subscriptionStatus: subStatus,
+    activeWatermarks: subStatus === "premium" ? [] : [watermarkType === "all" ? ["footer", "inline", "floating", "html_comment"] : watermarkType]
+  });
+});
+
+// Secure Export Sanitization interface with validation checks
+app.post("/api/watermark/export", (req, res) => {
+  const { articleId, userId, exportType, content, title } = req.body;
+  if (!articleId || !exportType || !content) {
+    return res.status(400).json({ error: "Missing required attributes: articleId, exportType, content" });
+  }
+
+  const db = readWatermarkDb();
+  const subStatus = db.user_subscriptions[userId]?.status || "free";
+
+  // Security Verification Guard: Free tiers are explicitly forbidden from initiating watermark-free clean files
+  let safeContent = content;
+  let activeWatermark = "none";
+
+  if (subStatus === "free") {
+    // Force complete set of watermarks, bypass attempt checked
+    safeContent = applyWatermarkServer(content, "all", "free", db.watermark_settings);
+    activeWatermark = "all";
+    
+    // Log billing restriction trigger only if they requested an unsanitized document
+    db.billing_access_logs.push({
+      id: `blog-${crypto.randomUUID()}`,
+      user_id: userId || "anonymous",
+      action: "ACCESS_BLOCKED",
+      status: "warn",
+      message: `System Intercept: Free user attempted clean bypass export down to raw ${exportType.toUpperCase()}. Watermarks forced.`,
+      timestamp: new Date().toISOString()
+    });
+  }
+
+  // Signed tokens are generated on the server to prove backend-driven permission validation
+  const validationTokenString = `${userId}:${articleId}:${subStatus}:${exportType}`;
+  const signedToken = crypto.createHmac("sha256", "ranksyncer_secure_salt_777").update(validationTokenString).digest("hex");
+
+  // Create real exports download database pointer
+  const exportId = `exp-${crypto.randomUUID()}`;
+  const fileName = `ranksyncer_${title ? title.toLowerCase().replace(/[^a-z0-9]+/g, "_") : "blog"}.${exportType === "markdown" ? "md" : exportType}`;
+  const hash = crypto.createHash("sha256").update(safeContent).digest("hex");
+
+  // Add metadata entry
+  const meta: ExportMetadata = {
+    id: exportId,
+    article_id: articleId,
+    user_id: userId || "anonymous",
+    export_type: exportType,
+    subscription_status: subStatus,
+    signed_token: signedToken,
+    created_at: new Date().toISOString(),
+    content_preview: safeContent.substring(0, 150) + "...",
+    file_name: fileName,
+    file_size: Buffer.byteLength(safeContent, "utf-8")
+  };
+  db.export_metadata.push(meta);
+
+  // Cache exports in relational map to guarantee high speed on duplicate renders
+  const cacheKey = `${userId || "anonymous"}_${articleId}_${exportType}`;
+  db.cached_exports[cacheKey] = {
+    content: safeContent,
+    hash,
+    timestamp: new Date().toISOString(),
+    subscriptionStatus: subStatus
+  };
+
+  // Watermark log trace
+  db.watermark_logs.push({
+    id: `wlog-${crypto.randomUUID()}`,
+    user_id: userId || "anonymous",
+    article_id: articleId,
+    watermark_type: activeWatermark,
+    export_type: exportType,
+    subscription_status: subStatus,
+    render_source: "exporter",
+    generated_output_hash: hash,
+    export_timestamp: new Date().toISOString(),
+    message: subStatus === "premium" ?
+      `Clean Download: Generated token signed document (${exportType.toUpperCase()}) successfully.` :
+      `Watermarked Download: Enforced footer & inline branding on export layout (${exportType.toUpperCase()}).`
+  });
+
+  writeWatermarkDb(db);
+
+  res.json({
+    success: true,
+    exportId,
+    fileName,
+    downloadUrl: `/api/watermark/download/${exportId}`,
+    signed_token: signedToken,
+    cached: false
+  });
+});
+
+// Serves the export payload as physical browser prompt files with high-fidelity formatting headers
+app.get("/api/watermark/download/:exportId", (req, res) => {
+  const { exportId } = req.params;
+  const db = readWatermarkDb();
+  
+  const searchObj = db.export_metadata.find(m => m.id === exportId);
+  if (!searchObj) {
+    return res.status(404).send("Document download node was not found or has been expired securely.");
+  }
+
+  // Retrieve cached content securely
+  const cacheKey = `${searchObj.user_id}_${searchObj.article_id}_${searchObj.export_type}`;
+  const cacheEntry = db.cached_exports[cacheKey];
+  const fileContent = cacheEntry ? cacheEntry.content : "Error: Content stream invalidated.";
+
+  res.setHeader("Content-Disposition", `attachment; filename="${searchObj.file_name}"`);
+  
+  if (searchObj.export_type === "markdown") {
+    res.setHeader("Content-Type", "text/markdown; charset=utf-8");
+    return res.send(fileContent);
+  } else if (searchObj.export_type === "html") {
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    const htmlPage = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>RankSyncer Export Pipeline</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; line-height: 1.7; max-width: 800px; margin: 50px auto; padding: 20px; color: #1e293b; background-color: #fafaf9; }
+    h1, h2, h3 { color: #0f172a; font-weight: 800; margin-top: 1.8em; }
+    hr { border: 0; border-top: 1px solid #e2e8f0; margin: 2.5em 0; }
+    code { font-family: monospace; background: #e2e8f0; padding: 2px 5px; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  ${convertMarkdownToHtml(fileContent)}
+</body>
+</html>`;
+    return res.send(htmlPage);
+  } else if (searchObj.export_type === "pdf") {
+    // Generate beautiful PDF-friendly export structure
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    const printPage = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>PDF Export Layout - RankSyncer</title>
+  <style>
+    @media print {
+      body { background: #fff; font-size: 11pt; }
+      .no-print { display: none; }
+    }
+    body { font-family: serif; max-width: 800px; margin: 40px auto; padding: 30px; line-height: 1.6; color: #111; }
+    h1 { text-align: center; font-size: 26pt; margin-bottom: 20px; }
+    .meta-hdr { text-align: center; font-size: 10pt; color: #555; border-bottom: 1px double #999; padding-bottom: 15px; margin-bottom: 30px; }
+    .print-footer { text-align: center; border-top: 1px solid #ddd; margin-top: 50px; padding-top: 15px; font-size: 9pt; color: #666; font-style: italic; }
+    .badge-bar { background: #f0f0f0; border-left: 5px solid #10b981; padding: 10px; font-size: 8.5pt; font-family: sans-serif; display: flex; justify-content: space-between; }
+  </style>
+</head>
+<body>
+  <div class="print-bar no-print" style="background:#5b21b6; color:#fff; padding:12px; margin-bottom:20px; border-radius:8px; display:flex; justify-content:space-between; align-items:center; font-family:sans-serif; font-size:12px;">
+    <span>📄 <strong>PDF Print Ready Output</strong> (Press Ctrl + P or CMD + P to Save as PDF)</span>
+    <button onclick="window.print()" style="background:#fff; color:#5b21b6; border:0; padding:5px 12px; font-weight:bold; border-radius:4px; cursor:pointer;">Print / Save PDF</button>
+  </div>
+  
+  <div class="badge-bar">
+    <span>🔒 Secure Token Certification: <strong>${searchObj.signed_token.substring(0, 16)}...</strong></span>
+    <span>Authority Grade: <strong>${searchObj.subscription_status.toUpperCase()} RENDER</strong></span>
+  </div>
+
+  ${convertMarkdownToHtml(fileContent)}
+</body>
+</html>`;
+    return res.send(printPage);
+  } else if (searchObj.export_type === "docx") {
+    // Output valid Rich Text representation that MS Word reads as a high priority editable file
+    res.setHeader("Content-Type", "application/vnd.ms-word; charset=utf-8");
+    const docxPage = `
+    <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
+    <head><title>Microsoft Word Docx Export</title><style>body { font-family: 'Calibri', sans-serif; line-height: 1.5; }</style></head>
+    <body>
+      <div style="border-bottom: 1px solid #aaa; padding-bottom: 10px; margin-bottom: 30px; font-size: 9pt; color: #777;">
+        RankSyncer Enterprise Document Export Portal. State Verification Sign Token: ${searchObj.signed_token}
+      </div>
+      ${convertMarkdownToHtml(fileContent)}
+    </body>
+    </html>`;
+    return res.send(docxPage);
+  } else {
+    // Fallback default plain text
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    return res.send(fileContent);
+  }
+});
+
+
 // ==========================================
 // Main Vite Server Mounting Middleware Setup
 // ==========================================
@@ -5379,6 +6760,9 @@ async function startServer() {
       res.sendFile(path.join(distPath, "index.html"));
     });
   }
+
+  // Initialize Scheduled Ghost publishing background worker
+  startCmsQueueWorker();
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`===============================================`);

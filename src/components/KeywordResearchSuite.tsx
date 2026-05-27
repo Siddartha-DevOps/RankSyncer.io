@@ -383,7 +383,7 @@ export const KeywordResearchSuite: React.FC<KeywordResearchSuiteProps> = ({
           <div className="anim-fade-in space-y-8">
             
             {/* Core Metrics Bento Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
               
               {/* Card 1: Search Volume */}
               <div className="bg-white border border-gray-200/85 hover:border-gray-200 rounded-2xl p-6 shadow-sm relative overflow-hidden group">
@@ -461,6 +461,58 @@ export const KeywordResearchSuite: React.FC<KeywordResearchSuiteProps> = ({
                   </span>
                 </div>
               </div>
+
+              {/* Card 5: Proprietary Opportunity Score */}
+              {(() => {
+                const oppScore = researchResult.opportunityScore || (() => {
+                  const volScore = Math.min(100, Math.max(10, Math.log10(researchResult.searchVolume || 1) * 20));
+                  const diffFactor = (100 - researchResult.keywordDifficulty) / 100;
+                  const compFactor = 0.5 + (researchResult.competition * 0.5);
+                  const cpcFactor = researchResult.cpc > 0 ? Math.min(1.4, 1 + (researchResult.cpc / 10)) : 1.0;
+                  return Math.max(5, Math.min(99, Math.round(volScore * diffFactor * compFactor * cpcFactor)));
+                })();
+
+                let ratingText = 'Low Opportunity';
+                let scoreColor = 'text-gray-400';
+                let ratingColor = 'text-gray-500 bg-gray-50 border-gray-100';
+                let progressColor = 'bg-gray-400';
+
+                if (oppScore >= 70) {
+                  ratingText = 'High Priority';
+                  scoreColor = 'text-emerald-600';
+                  ratingColor = 'text-emerald-700 bg-emerald-50 border-emerald-100';
+                  progressColor = 'bg-emerald-500';
+                } else if (oppScore >= 40) {
+                  ratingText = 'Moderate Seed';
+                  scoreColor = 'text-blue-600';
+                  ratingColor = 'text-blue-700 bg-blue-50 border-blue-100';
+                  progressColor = 'bg-blue-500';
+                }
+
+                return (
+                  <div className="bg-amber-50/20 border border-amber-200/70 hover:border-amber-300 rounded-2xl p-6 shadow-sm relative overflow-hidden group">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-semibold text-amber-800 uppercase tracking-wider">Opportunity Index</span>
+                      <Award className="w-4 h-4 text-amber-600" />
+                    </div>
+                    <div className="mt-2.5 flex items-baseline gap-1">
+                      <span className={`text-4xl font-black tracking-tight ${scoreColor}`}>
+                        {oppScore}
+                      </span>
+                      <span className="text-xs font-semibold text-amber-700 uppercase">/ 100</span>
+                    </div>
+                    <div className="mt-3.5">
+                      <div className="w-full bg-amber-100/60 h-2 rounded-full overflow-hidden">
+                        <div className={`h-full ${progressColor}`} style={{ width: `${oppScore}%` }} />
+                      </div>
+                      <span className={`inline-block text-[10px] uppercase font-bold border rounded px-1.5 py-0.5 mt-2 ${ratingColor}`}>
+                        {ratingText}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })()}
+
             </div>
 
             {/* Visual Charts and Trends Map */}
