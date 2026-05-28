@@ -16,10 +16,11 @@ import RankSyncerLogo from './RankSyncerLogo';
 interface PricingPageProps {
   onBackToLanding: () => void;
   onLaunchApp: () => void;
+  onIntegrationsClick?: () => void;
   projectsCount?: number;
 }
 
-export default function PricingPage({ onBackToLanding, onLaunchApp, projectsCount = 0 }: PricingPageProps) {
+export default function PricingPage({ onBackToLanding, onLaunchApp, onIntegrationsClick, projectsCount = 0 }: PricingPageProps) {
   // FAQ interactive state tracking using boolean flags
   const [faqOpen, setFaqOpen] = useState<{ [key: number]: boolean }>({
     0: false,
@@ -71,26 +72,41 @@ export default function PricingPage({ onBackToLanding, onLaunchApp, projectsCoun
       <div className="absolute top-1/3 right-1/4 w-[600px] h-[600px] bg-purple-100/30 rounded-full filter blur-[120px] pointer-events-none z-0" />
 
       {/* Simple navigation bar */}
-      <header className="sticky top-0 z-40 bg-[#faf8f9]/85 backdrop-blur-md border-b border-indigo-100/30">
+      <header className="sticky top-0 z-50 bg-[#faf8f9]/85 backdrop-blur-md border-b border-emerald-100/35">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-18 flex items-center justify-between">
           <div className="cursor-pointer" onClick={onBackToLanding}>
             <RankSyncerLogo theme="light" />
           </div>
 
-          <div className="hidden md:flex items-center space-x-8 text-sm font-semibold text-slate-600">
-            <button onClick={onBackToLanding} className="hover:text-indigo-600 transition-colors cursor-pointer">
-              Discovery Home
+          <nav className="hidden md:flex items-center space-x-8 text-sm font-semibold text-slate-600">
+            <button onClick={onBackToLanding} className="hover:text-emerald-600 transition-colors cursor-pointer font-semibold text-slate-600">
+              How It Works
             </button>
-            <span className="text-slate-300">|</span>
-            <button onClick={onLaunchApp} className="hover:text-indigo-600 transition-colors cursor-pointer">
-              Control Panel
+            <button onClick={onBackToLanding} className="hover:text-emerald-600 transition-colors cursor-pointer font-semibold text-slate-600">
+              Features
             </button>
-          </div>
+            <button 
+              onClick={onIntegrationsClick} 
+              className="hover:text-emerald-600 transition-colors cursor-pointer font-semibold text-slate-600"
+            >
+              Integrations
+            </button>
+            <button onClick={onBackToLanding} className="hover:text-emerald-600 transition-colors cursor-pointer font-semibold text-slate-600">
+              AI Playground
+            </button>
+            <span className="text-emerald-600 font-bold flex items-center gap-1 cursor-default">
+              Pricing
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-600" />
+            </span>
+            <button onClick={onLaunchApp} className="hover:text-emerald-600 transition-colors cursor-pointer font-semibold text-slate-600">
+              Control Panel ({projectsCount} site{projectsCount !== 1 ? 's' : ''})
+            </button>
+          </nav>
 
           <div>
             <button 
               onClick={onLaunchApp}
-              className="px-4.5 py-2.5 bg-slate-900 text-white hover:bg-indigo-600 font-bold text-xs rounded-xl transition-all cursor-pointer shadow-sm shadow-slate-950/10"
+              className="px-4.5 py-2.5 bg-slate-900 text-white hover:bg-emerald-600 font-bold text-xs rounded-xl transition-all cursor-pointer shadow-sm shadow-slate-950/10 hover:scale-[1.02]"
             >
               Launch Console
             </button>

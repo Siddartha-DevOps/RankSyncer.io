@@ -70,6 +70,11 @@ import EnterpriseMultilingualSuite from './components/EnterpriseMultilingualSuit
 import EnterpriseAIRewriteSuite from './components/EnterpriseAIRewriteSuite';
 import WatermarkSuite from './components/WatermarkSuite';
 import { GhostCmsIntegration } from './components/GhostCmsIntegration';
+import { FramerCmsIntegration } from './components/FramerCmsIntegration';
+import { NotionCmsIntegration } from './components/NotionCmsIntegration';
+import { WordpressCmsIntegration } from './components/WordpressCmsIntegration';
+import { NextjsCmsIntegration } from './components/NextjsCmsIntegration';
+import { IntegrationsPage } from './components/IntegrationsPage';
 
 
 // Firebase Authentication and Relational Sync Client Integrations
@@ -102,7 +107,7 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(true);
 
   // Navigation & Core States
-  const [viewMode, setViewMode] = useState<'landing' | 'app' | 'pricing'>('landing');
+  const [viewMode, setViewMode] = useState<'landing' | 'app' | 'pricing' | 'integrations'>('landing');
   const [activeTab, setActiveTab] = useState<'dashboard' | 'projects' | 'keywords' | 'planner' | 'editor' | 'crawler' | 'settings' | 'brand'>('brand');
   const [keywordsSubTab, setKeywordsSubTab] = useState<'explore' | 'tracker' | 'ai-discovery'>('explore');
   
@@ -239,7 +244,7 @@ export default function App() {
   // States for active publishing gateway/dialog
   const [publishingArticle, setPublishingArticle] = useState<Article | null>(null);
   const [isPublishingToCms, setIsPublishingToCms] = useState(false);
-  const [selectedPublishPlatform, setSelectedPublishPlatform] = useState<'wordpress' | 'webflow' | 'shopify' | 'dummy' | 'headless_webhook' | 'ghost'>('wordpress');
+  const [selectedPublishPlatform, setSelectedPublishPlatform] = useState<'wordpress' | 'webflow' | 'shopify' | 'dummy' | 'headless_webhook' | 'ghost' | 'framer' | 'notion' | 'wordpress_com' | 'nextjs'>('wordpress');
   const [cmsPublishResult, setCmsPublishResult] = useState<{ success: boolean; url?: string; error?: string } | null>(null);
 
   // Ghost Custom Publication Options States
@@ -249,16 +254,65 @@ export default function App() {
   const [ghostSlug, setGhostSlug] = useState<string>('');
   const [ghostVisibility, setGhostVisibility] = useState<'public' | 'members' | 'paid'>('public');
 
+  // Framer Custom Publication Options States
+  const [framerPublishStatus, setFramerPublishStatus] = useState<'draft' | 'published' | 'scheduled'>('draft');
+  const [framerScheduledTime, setFramerScheduledTime] = useState<string>('');
+  const [framerTags, setFramerTags] = useState<string>('SEO, AI Generated, Framer');
+  const [framerSlug, setFramerSlug] = useState<string>('');
+
+  // Notion Custom Publication Options States
+  const [notionPublishStatus, setNotionPublishStatus] = useState<'draft' | 'published' | 'scheduled'>('draft');
+  const [notionScheduledTime, setNotionScheduledTime] = useState<string>('');
+  const [notionTags, setNotionTags] = useState<string>('SEO, AI Generated, Notion');
+  const [notionSlug, setNotionSlug] = useState<string>('');
+  const [notionCustomDatabaseId, setNotionCustomDatabaseId] = useState<string>('');
+
+  // WordPress.com Custom Publication Options States
+  const [wordpressComPublishStatus, setWordpressComPublishStatus] = useState<'draft' | 'published' | 'scheduled'>('draft');
+  const [wordpressComScheduledTime, setWordpressComScheduledTime] = useState<string>('');
+  const [wordpressComTags, setWordpressComTags] = useState<string>('SEO, AI Generated, WordPress');
+  const [wordpressComSlug, setWordpressComSlug] = useState<string>('');
+  const [wordpressComSelectedSiteId, setWordpressComSelectedSiteId] = useState<string>('');
+
+  // Next.js Custom Publication Options States
+  const [nextjsPublishStatus, setNextjsPublishStatus] = useState<'draft' | 'published' | 'scheduled'>('draft');
+  const [nextjsScheduledTime, setNextjsScheduledTime] = useState<string>('');
+  const [nextjsTags, setNextjsTags] = useState<string>('SEO, AI Generated, Nextjs');
+  const [nextjsSlug, setNextjsSlug] = useState<string>('');
+  const [nextjsSelectedRepoName, setNextjsSelectedRepoName] = useState<string>('');
+  const [nextjsOutputFormat, setNextjsOutputFormat] = useState<'markdown' | 'mdx'>('mdx');
+  const [nextjsRoutingStyle, setNextjsRoutingStyle] = useState<'app' | 'pages'>('app');
+  const [nextjsContentFolder, setNextjsContentFolder] = useState<string>('posts');
+
   // Synchronize article slugs automatically when gateway is focused
   useEffect(() => {
     if (publishingArticle) {
       setGhostSlug(publishingArticle.slug || '');
       setGhostPublishStatus('draft');
+      
+      setFramerSlug(publishingArticle.slug || '');
+      setFramerPublishStatus('draft');
+
+      setNotionSlug(publishingArticle.slug || '');
+      setNotionPublishStatus('draft');
+
+      setWordpressComSlug(publishingArticle.slug || '');
+      setWordpressComPublishStatus('draft');
+
+      setNextjsSlug(publishingArticle.slug || '');
+      setNextjsPublishStatus('draft');
+
       const tomorrow = new Date();
       tomorrow.setDate(tomorrow.getDate() + 1);
       tomorrow.setMinutes(0);
       tomorrow.setSeconds(0);
-      setGhostScheduledTime(tomorrow.toISOString().slice(0, 16));
+      
+      const tomorrowFormatted = tomorrow.toISOString().slice(0, 16);
+      setGhostScheduledTime(tomorrowFormatted);
+      setFramerScheduledTime(tomorrowFormatted);
+      setNotionScheduledTime(tomorrowFormatted);
+      setWordpressComScheduledTime(tomorrowFormatted);
+      setNextjsScheduledTime(tomorrowFormatted);
     }
   }, [publishingArticle]);
 
@@ -1387,21 +1441,125 @@ export default function App() {
   // Active Direct CMS Syndication API sync
   const handleActiveCmsPublish = async (
     art: Article, 
-    platform: 'wordpress' | 'webflow' | 'shopify' | 'dummy' | 'headless_webhook' | 'ghost',
+    platform: 'wordpress' | 'webflow' | 'shopify' | 'dummy' | 'headless_webhook' | 'ghost' | 'framer' | 'notion' | 'wordpress_com' | 'nextjs',
     extraOptions?: {
       slug?: string;
       status?: "draft" | "published" | "scheduled";
       scheduledPublishTime?: string;
       tags?: string[];
       featureImage?: string;
+      customDatabaseId?: string;
+      outputFormat?: "markdown" | "mdx";
+      routingStyle?: "app" | "pages";
     }
   ) => {
     setIsPublishingToCms(true);
     setCmsPublishResult(null);
 
+    if (platform === 'nextjs') {
+      try {
+        // Find if they have a connected nextjs integration
+        const resInteg = await fetch(`/api/cms/nextjs/integrations?projectId=${selectedProjectId}`);
+        if (!resInteg.ok) throw new Error("Could not fetch active Next.js directory integrations.");
+        const integData = await resInteg.json();
+        const activeInteg = integData.integrations && integData.integrations[0];
+        if (!activeInteg) {
+          throw new Error("No connected Next.js repository found. Please configure your GitHub linkage in Page settings first.");
+        }
+
+        const isScheduled = extraOptions?.status === 'scheduled';
+        const urlToCall = isScheduled ? '/api/cms/nextjs/schedule' : '/api/cms/nextjs/sync-now';
+        
+        let reqBody = {};
+        if (isScheduled) {
+          reqBody = {
+            projectId: selectedProjectId,
+            userId: currentUser?.uid || "anonymous",
+            articleId: art.id,
+            repositoryName: activeInteg.repository_name,
+            scheduledPublishTime: extraOptions?.scheduledPublishTime,
+            outputFormat: extraOptions?.outputFormat || activeInteg.output_format,
+            routingStyle: extraOptions?.routingStyle || activeInteg.routing_style
+          };
+        } else {
+          reqBody = {
+            projectId: selectedProjectId,
+            userId: currentUser?.uid || "anonymous",
+            article: {
+              id: art.id,
+              title: art.title,
+              content: art.content,
+              slug: extraOptions?.slug || art.slug,
+              tags: extraOptions?.tags || ["SEO", "Next.js", "RankSyncer"],
+              status: extraOptions?.status || "published",
+              metaDescription: art.metaDescription,
+              featureImage: extraOptions?.featureImage || art.featureImage || ""
+            },
+            repositoryName: activeInteg.repository_name,
+            isSandbox: activeInteg.encrypted_github_token === 'mock-github-token'
+          };
+        }
+
+        const response = await fetch(urlToCall, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(reqBody)
+        });
+
+        if (!response.ok) {
+          const errData = await response.json();
+          throw new Error(errData.error || `Server responded with status ${response.status}`);
+        }
+
+        const data = await response.json();
+        
+        // Update states to simulate success
+        setArticles(prev => prev.map(a => {
+          if (a.id === art.id) {
+            const updated = { ...a, status: (isScheduled ? 'Scheduled' : 'Published') as any };
+            if (currentUser) {
+              fsSaveArticle(updated, a.projectId, currentUser.uid);
+            }
+            return updated;
+          }
+          return a;
+        }));
+
+        const successLog: CrawlerLog = {
+          id: `l-${Date.now()}-nextjs`,
+          timestamp: new Date().toISOString(),
+          type: 'success',
+          message: isScheduled 
+            ? `Next.js Release Scheduled: "${art.title}" queued for automated commit to ${activeInteg.repository_name}`
+            : `Next.js Sync Success: "${art.title}" committed natively to repository ${activeInteg.repository_name}! SHA: ${data.commitSha}`,
+          module: 'CMS_SYNC'
+        };
+
+        if (currentUser) {
+          fsSaveLog(successLog, art.projectId, currentUser.uid);
+        } else {
+          setLogs(prev => [successLog, ...prev]);
+        }
+
+        setCmsPublishResult({ 
+          success: true, 
+          url: isScheduled ? undefined : (data.url || activeInteg.blog_site_url || `https://github.com/${activeInteg.repository_name}`) 
+        });
+
+      } catch (err: any) {
+        console.error("Next.js local sync failed:", err);
+        setCmsPublishResult({ success: false, error: err.message || "Unable to sync with Next.js repo." });
+      } finally {
+        setIsPublishingToCms(false);
+      }
+      return;
+    }
+
     let credentials = {};
     if (platform === 'wordpress') {
       credentials = wpConfig;
+    } else if (platform === 'wordpress_com') {
+      credentials = { siteId: wordpressComSelectedSiteId };
     } else if (platform === 'webflow') {
       credentials = webflowConfig;
     } else if (platform === 'shopify') {
@@ -1434,7 +1592,8 @@ export default function App() {
           projectId: selectedProjectId,
           userId: currentUser?.uid || "anonymous",
           status: extraOptions?.status || "draft",
-          scheduledPublishTime: extraOptions?.scheduledPublishTime || null
+          scheduledPublishTime: extraOptions?.scheduledPublishTime || null,
+          customDatabaseId: extraOptions?.customDatabaseId || null
         })
       });
 
@@ -1518,6 +1677,7 @@ export default function App() {
       <OutrankLanding 
         onLaunchApp={() => setViewMode('app')}
         onPricingClick={() => setViewMode('pricing')}
+        onIntegrationsClick={() => setViewMode('integrations')}
         projectsCount={projects.length}
       />
     );
@@ -1528,7 +1688,23 @@ export default function App() {
       <PricingPage 
         onBackToLanding={() => setViewMode('landing')}
         onLaunchApp={() => setViewMode('app')}
+        onIntegrationsClick={() => setViewMode('integrations')}
         projectsCount={projects.length}
+      />
+    );
+  }
+
+  if (viewMode === 'integrations') {
+    return (
+      <IntegrationsPage 
+        onBackToLanding={() => setViewMode('landing')}
+        onLaunchApp={() => setViewMode('app')}
+        onPricingClick={() => setViewMode('pricing')}
+        projectsCount={projects.length}
+        activePlan={activePlan}
+        onTabChange={(tab) => {
+          setActiveTab(tab as any);
+        }}
       />
     );
   }
@@ -1555,6 +1731,28 @@ export default function App() {
           <div className="flex items-center space-x-3 cursor-pointer" onClick={() => setViewMode('landing')}>
             <RankSyncerLogo theme={theme} />
           </div>
+
+          {/* Desktop Shared Navigation Links */}
+          <nav className="hidden lg:flex items-center space-x-6 text-xs font-bold text-slate-500 dark:text-slate-400">
+            <button onClick={() => setViewMode('landing')} className="hover:text-emerald-600 dark:hover:text-[#4ade80] transition-colors cursor-pointer">
+              How It Works
+            </button>
+            <button onClick={() => setViewMode('landing')} className="hover:text-emerald-600 dark:hover:text-[#4ade80] transition-colors cursor-pointer">
+              Features
+            </button>
+            <button onClick={() => setViewMode('integrations')} className="hover:text-emerald-600 dark:hover:text-[#4ade80] transition-colors cursor-pointer text-slate-700 dark:text-slate-350">
+              Integrations
+            </button>
+            <button onClick={() => setViewMode('landing')} className="hover:text-emerald-600 dark:hover:text-[#4ade80] transition-colors cursor-pointer">
+              AI Playground
+            </button>
+            <button onClick={() => setViewMode('pricing')} className="hover:text-emerald-600 dark:hover:text-[#4ade80] transition-colors cursor-pointer">
+              Pricing
+            </button>
+            <span className="text-emerald-600 dark:text-[#4ade80] font-black underline decoration-2 underline-offset-4 cursor-default">
+              Control Panel
+            </span>
+          </nav>
 
           {/* Project Scoped Selector */}
           <div className={`flex items-center space-x-2 p-1.5 rounded-xl border transition-all ${
@@ -1616,6 +1814,60 @@ export default function App() {
           </div>
         </div>
       </header>
+
+      {/* Top Right Utility Bar */}
+      <div className="max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 relative z-30 h-0">
+        <div className="absolute right-4 sm:right-6 lg:right-8 -top-3">
+          <div className={`flex items-center gap-2.5 px-3 py-1.5 rounded-full shadow-xs text-[10px] sm:text-xs font-sans border transition-all ${
+            theme === 'dark'
+              ? 'bg-[#0c1612]/95 border-[#14271f] text-slate-350 backdrop-blur-md'
+              : 'bg-white/95 border-emerald-100 text-slate-700 backdrop-blur-md shadow-sm'
+          }`}>
+            <div className="flex items-center gap-1">
+              <Link2 className="h-3 w-3 text-emerald-500" />
+              <span>Integrations: <strong className="font-extrabold text-slate-900 dark:text-white">
+                {(() => {
+                  let cnt = 0;
+                  if (wpConfig?.siteUrl) cnt++;
+                  if (shopifyConfig?.storeDomain) cnt++;
+                  if (webflowConfig?.siteToken) cnt++;
+                  if (headlessConfig?.webhookUrl) cnt++;
+                  if (gscAccount?.email) cnt++;
+                  return cnt > 0 ? cnt : 2;
+                })()}
+              </strong></span>
+            </div>
+            
+            <span className="text-slate-200 dark:text-[#14271f]">|</span>
+            
+            <div className="flex items-center gap-1">
+              <Globe2 className="h-3 w-3 text-teal-500" />
+              <span>Sites: <strong className="font-extrabold text-slate-900 dark:text-white">{projects.length}</strong></span>
+            </div>
+
+            <span className="text-slate-200 dark:text-[#14271f]">|</span>
+
+            <div className="flex items-center gap-1">
+              <span className={`h-1.5 w-1.5 rounded-full ${activePlan === 'premium' ? 'bg-indigo-500 animate-pulse' : 'bg-amber-400'}`} />
+              <span className="font-black uppercase text-[8px] sm:text-[9px] tracking-wider text-slate-900 dark:text-white">
+                {activePlan === 'premium' ? 'Premium Tier' : 'Free Demo'}
+              </span>
+            </div>
+
+            <span className="text-slate-200 dark:text-[#14271f]">|</span>
+
+            <button 
+              onClick={() => {
+                setActiveTab('settings');
+              }}
+              className="hover:text-emerald-500 hover:rotate-45 transition-all p-0.5 cursor-pointer flex items-center justify-center"
+              title="Open Settings Hub"
+            >
+              <Settings className="h-3.5 w-3.5 text-slate-400 dark:text-slate-500 hover:text-emerald-500" />
+            </button>
+          </div>
+        </div>
+      </div>
 
       {/* Main Grid Wrapper */}
       <div className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 flex flex-col md:flex-row gap-6">
@@ -4844,6 +5096,98 @@ export default function App() {
                   }}
                 />
               </div>
+
+              {/* Framer CMS Integration panel */}
+              <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-2xs">
+                <FramerCmsIntegration 
+                  projectId={selectedProjectId} 
+                  userId={currentUser?.uid || "anonymous"} 
+                  activePlan={activePlan}
+                  onLogAdded={(newLog) => {
+                    const mappedLog: CrawlerLog = {
+                      id: newLog.id,
+                      timestamp: newLog.timestamp,
+                      type: newLog.type,
+                      message: newLog.message,
+                      module: "CMS_SYNC"
+                    };
+                    if (currentUser) {
+                      fsSaveLog(mappedLog, selectedProjectId, currentUser.uid);
+                    } else {
+                      setLogs(prev => [mappedLog, ...prev]);
+                    }
+                  }}
+                />
+              </div>
+
+              {/* Notion Database Auto-Sync Integration panel */}
+              <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-2xs">
+                <NotionCmsIntegration 
+                  projectId={selectedProjectId} 
+                  userId={currentUser?.uid || "anonymous"} 
+                  activePlan={activePlan}
+                  onLogAdded={(newLog) => {
+                    const mappedLog: CrawlerLog = {
+                      id: newLog.id,
+                      timestamp: newLog.timestamp,
+                      type: newLog.type,
+                      message: newLog.message,
+                      module: "CMS_SYNC"
+                    };
+                    if (currentUser) {
+                      fsSaveLog(mappedLog, selectedProjectId, currentUser.uid);
+                    } else {
+                      setLogs(prev => [mappedLog, ...prev]);
+                    }
+                  }}
+                />
+              </div>
+
+              {/* WordPress.com Hosted Integration panel */}
+              <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-2xs">
+                <WordpressCmsIntegration 
+                  projectId={selectedProjectId} 
+                  userId={currentUser?.uid || "anonymous"} 
+                  activePlan={activePlan}
+                  onLogAdded={(newLog) => {
+                    const mappedLog: CrawlerLog = {
+                      id: newLog.id,
+                      timestamp: newLog.timestamp,
+                      type: newLog.type,
+                      message: newLog.message,
+                      module: "CMS_SYNC"
+                    };
+                    if (currentUser) {
+                      fsSaveLog(mappedLog, selectedProjectId, currentUser.uid);
+                    } else {
+                      setLogs(prev => [mappedLog, ...prev]);
+                    }
+                  }}
+                />
+              </div>
+
+              {/* Next.js Blog-Starter Github Publishing Hub panel */}
+              <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-2xs">
+                <NextjsCmsIntegration 
+                  projectId={selectedProjectId} 
+                  userId={currentUser?.uid || "anonymous"} 
+                  activePlan={activePlan}
+                  onLogAdded={(newLog) => {
+                    const mappedLog: CrawlerLog = {
+                      id: newLog.id,
+                      timestamp: newLog.timestamp,
+                      type: newLog.type,
+                      message: newLog.message,
+                      module: "CMS_SYNC"
+                    };
+                    if (currentUser) {
+                      fsSaveLog(mappedLog, selectedProjectId, currentUser.uid);
+                    } else {
+                      setLogs(prev => [mappedLog, ...prev]);
+                    }
+                  }}
+                />
+              </div>
               
               {/* API keys config proxy block */}
               <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-2xs space-y-4">
@@ -5560,6 +5904,110 @@ export default function App() {
                       </span>
                     </button>
 
+                    {/* OPTION 7: Native Framer CMS */}
+                    <button 
+                      type="button"
+                      onClick={() => setSelectedPublishPlatform('framer')}
+                      className={`p-3.5 rounded-2xl border text-left flex items-start justify-between transition-all cursor-pointer ${
+                        selectedPublishPlatform === 'framer' 
+                          ? 'border-blue-600 bg-blue-600/5 shadow-[0_0_8px_rgba(37,99,235,0.15)]' 
+                          : 'border-slate-200 hover:bg-slate-50'
+                      }`}
+                    >
+                      <div className="flex items-center space-x-3">
+                        <div className="h-8 w-8 bg-blue-50 text-blue-600 border border-blue-100 rounded-xl flex items-center justify-center shrink-0">
+                          <Layers className="h-4 w-4 font-bold" />
+                        </div>
+                        <div>
+                          <p className="text-xs font-black text-slate-900">Framer Portfolio CMS</p>
+                          <p className="text-[9px] text-slate-400">
+                            Workspace REST links
+                          </p>
+                        </div>
+                      </div>
+                      <span className={`h-4 w-4 rounded-full border flex items-center justify-center shrink-0 ${selectedPublishPlatform === 'framer' ? 'border-blue-600 bg-blue-600 text-white' : 'border-slate-300'}`}>
+                        {selectedPublishPlatform === 'framer' && <span className="h-1.5 w-1.5 rounded-full bg-white" />}
+                      </span>
+                    </button>
+
+                    {/* OPTION 8: Notion Database Sync */}
+                    <button 
+                      type="button"
+                      onClick={() => setSelectedPublishPlatform('notion')}
+                      className={`p-3.5 rounded-2xl border text-left flex items-start justify-between transition-all cursor-pointer ${
+                        selectedPublishPlatform === 'notion' 
+                          ? 'border-emerald-600 bg-emerald-600/5 shadow-[0_0_8px_rgba(16,185,129,0.15)]' 
+                          : 'border-slate-200 hover:bg-slate-50'
+                      }`}
+                    >
+                      <div className="flex items-center space-x-3">
+                        <div className="h-8 w-8 bg-emerald-50 text-emerald-600 border border-emerald-100 rounded-xl flex items-center justify-center shrink-0">
+                          <Database className="h-4 w-4 text-emerald-600" />
+                        </div>
+                        <div>
+                          <p className="text-xs font-black text-slate-900">Notion Database Sync</p>
+                          <p className="text-[9px] text-slate-400">
+                            Real Notion workspace tables
+                          </p>
+                        </div>
+                      </div>
+                      <span className={`h-4 w-4 rounded-full border flex items-center justify-center shrink-0 ${selectedPublishPlatform === 'notion' ? 'border-emerald-600 bg-emerald-600 text-white' : 'border-slate-300'}`}>
+                        {selectedPublishPlatform === 'notion' && <span className="h-1.5 w-1.5 rounded-full bg-white" />}
+                      </span>
+                    </button>
+
+                    {/* OPTION 9: WordPress.com Hosted REST */}
+                    <button 
+                      type="button"
+                      onClick={() => setSelectedPublishPlatform('wordpress_com')}
+                      className={`p-3.5 rounded-2xl border text-left flex items-start justify-between transition-all cursor-pointer ${
+                        selectedPublishPlatform === 'wordpress_com' 
+                          ? 'border-blue-600 bg-blue-600/5 shadow-[0_0_8px_rgba(37,99,235,0.15)]' 
+                          : 'border-slate-200 hover:bg-slate-50'
+                      }`}
+                    >
+                      <div className="flex items-center space-x-3">
+                        <div className="h-8 w-8 bg-blue-50 text-blue-600 border border-blue-100 rounded-xl flex items-center justify-center shrink-0">
+                          <Globe className="h-4 w-4 text-blue-600" />
+                        </div>
+                        <div>
+                          <p className="text-xs font-black text-slate-900">WordPress.com Hosted</p>
+                          <p className="text-[9px] text-slate-400">
+                            Automatic multi-blog deploy
+                          </p>
+                        </div>
+                      </div>
+                      <span className={`h-4 w-4 rounded-full border flex items-center justify-center shrink-0 ${selectedPublishPlatform === 'wordpress_com' ? 'border-blue-600 bg-blue-600 text-white' : 'border-slate-300'}`}>
+                        {selectedPublishPlatform === 'wordpress_com' && <span className="h-1.5 w-1.5 rounded-full bg-white" />}
+                      </span>
+                    </button>
+
+                    {/* OPTION 10: Next.js Blog Sync */}
+                    <button 
+                      type="button"
+                      onClick={() => setSelectedPublishPlatform('nextjs')}
+                      className={`p-3.5 rounded-2xl border text-left flex items-start justify-between transition-all cursor-pointer ${
+                        selectedPublishPlatform === 'nextjs' 
+                          ? 'border-slate-800 bg-slate-800/5 shadow-[0_0_8px_rgba(30,41,59,0.15)]' 
+                          : 'border-slate-200 hover:bg-slate-50'
+                      }`}
+                    >
+                      <div className="flex items-center space-x-3">
+                        <div className="h-8 w-8 bg-slate-105 text-slate-800 border border-slate-200 rounded-xl flex items-center justify-center shrink-0">
+                          <Github className="h-4 w-4 text-slate-850" />
+                        </div>
+                        <div>
+                          <p className="text-xs font-black text-slate-900">Next.js Blog Starter</p>
+                          <p className="text-[9px] text-slate-400">
+                            Push MDX / Markdown files
+                          </p>
+                        </div>
+                      </div>
+                      <span className={`h-4 w-4 rounded-full border flex items-center justify-center shrink-0 ${selectedPublishPlatform === 'nextjs' ? 'border-slate-800 bg-slate-800 text-white' : 'border-slate-300'}`}>
+                        {selectedPublishPlatform === 'nextjs' && <span className="h-1.5 w-1.5 rounded-full bg-white" />}
+                      </span>
+                    </button>
+
                   </div>
                 </div>
 
@@ -5676,6 +6124,351 @@ export default function App() {
                   </div>
                 )}
 
+                {/* FRAMER CMS METADATA CONFIGURATION PANEL */}
+                {selectedPublishPlatform === 'framer' && (
+                  <div className="bg-slate-50 border border-slate-150 p-4 rounded-3xl mt-4 space-y-4 animate-fade-in font-sans">
+                    <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                      <span className="text-xs font-black uppercase text-slate-800 tracking-wider flex items-center gap-1.5">
+                        <Layers className="h-4 w-4 text-blue-600" />
+                        Framer Metadata & Syndication Settings
+                      </span>
+                      <span className="text-[10px] text-slate-400 font-bold">Configure collection items prior to synchronization</span>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {/* Sub-item: URL Slug Edit */}
+                      <div className="space-y-1">
+                        <label className="block text-[10px] font-black uppercase text-slate-500">Resource URL Slug</label>
+                        <input 
+                          type="text"
+                          value={framerSlug}
+                          onChange={(e) => setFramerSlug(e.target.value)}
+                          placeholder="slug-value-here"
+                          className="bg-white border border-slate-200 text-xs p-2.5 outline-none rounded-xl focus:ring-1 focus:ring-slate-500 w-full font-mono font-bold text-slate-700"
+                        />
+                      </div>
+
+                      {/* Sub-item: Tags List */}
+                      <div className="space-y-1">
+                        <label className="block text-[10px] font-black uppercase text-slate-500">Categories / Tags (Comma Separated)</label>
+                        <input 
+                          type="text"
+                          value={framerTags}
+                          onChange={(e) => setFramerTags(e.target.value)}
+                          placeholder="e.g. SEO, Growth, Marketing"
+                          className="bg-white border border-slate-200 text-xs p-2.5 outline-none rounded-xl focus:ring-1 focus:ring-slate-500 w-full text-slate-705 font-semibold"
+                        />
+                      </div>
+
+                      {/* Sub-item: Publish Status */}
+                      <div className="space-y-1">
+                        <label className="block text-[10px] font-black uppercase text-slate-500">Default Post Status State</label>
+                        <select 
+                          value={framerPublishStatus}
+                          onChange={(e) => setFramerPublishStatus(e.target.value as any)}
+                          className="bg-white border border-slate-200 text-xs p-2.5 outline-none rounded-xl focus:ring-1 focus:ring-slate-500 w-full font-extrabold text-slate-800 cursor-pointer"
+                        >
+                          <option value="draft">Save as Draft (Safe)</option>
+                          <option value="published">Publish Instantly (Live)</option>
+                          <option value="scheduled">Schedule Post (Autopilot Worker)</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Conditional scheduling picker */}
+                    {framerPublishStatus === 'scheduled' && (
+                      <div className="bg-amber-50/50 border border-amber-100 p-3.5 rounded-xl space-y-2 animate-slide-up">
+                        <div className="flex items-start gap-2">
+                          <Clock className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                          <div>
+                            <span className="block text-xs font-bold text-amber-800">Background Schedule Core (Continuous Worker Mode)</span>
+                            <span className="block text-[10px] text-slate-550 leading-relaxed font-semibold">
+                              The background task daemon tracks UTC time coordinates continuously firing scheduled requests.
+                            </span>
+                          </div>
+                        </div>
+                        <div className="pt-1.5 flex items-center gap-3">
+                          <label className="text-[10px] font-black uppercase text-amber-800 inline-block shrink-0">Release Timestamp (Local Time):</label>
+                          <input 
+                            type="datetime-local"
+                            value={framerScheduledTime}
+                            onChange={(e) => setFramerScheduledTime(e.target.value)}
+                            className="bg-white border border-amber-200 text-xs p-2 outline-none rounded-xl font-bold text-slate-700 cursor-pointer"
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* NOTION CMS METADATA CONFIGURATION PANEL */}
+                {selectedPublishPlatform === 'notion' && (
+                  <div className="bg-slate-50 border border-slate-150 p-4 rounded-3xl mt-4 space-y-4 animate-fade-in font-sans">
+                    <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                      <span className="text-xs font-black uppercase text-slate-800 tracking-wider flex items-center gap-1.5">
+                        <Database className="h-4 w-4 text-emerald-600" />
+                        Notion Metadata & Document Schema Sync
+                      </span>
+                      <span className="text-[10px] text-slate-400 font-bold">Configure database page column properties prior to insertion</span>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {/* Sub-item: URL Slug Edit */}
+                      <div className="space-y-1">
+                        <label className="block text-[10px] font-black uppercase text-slate-500">Resource URL Slug Property</label>
+                        <input 
+                          type="text"
+                          value={notionSlug}
+                          onChange={(e) => setNotionSlug(e.target.value)}
+                          placeholder="slug-value-here"
+                          className="bg-white border border-slate-200 text-xs p-2.5 outline-none rounded-xl focus:ring-1 focus:ring-slate-500 w-full font-mono font-bold text-slate-700"
+                        />
+                      </div>
+
+                      {/* Sub-item: Tags List */}
+                      <div className="space-y-1">
+                        <label className="block text-[10px] font-black uppercase text-slate-500">Document Tags (Comma Separated Multi-select)</label>
+                        <input 
+                          type="text"
+                          value={notionTags}
+                          onChange={(e) => setNotionTags(e.target.value)}
+                          placeholder="e.g. SEO, Growth, Marketing"
+                          className="bg-white border border-slate-200 text-xs p-2.5 outline-none rounded-xl focus:ring-1 focus:ring-slate-500 w-full text-slate-705 font-semibold"
+                        />
+                      </div>
+
+                      {/* Sub-item: Publish Status */}
+                      <div className="space-y-1">
+                        <label className="block text-[10px] font-black uppercase text-slate-500">Default Notion Entry Status</label>
+                        <select 
+                          value={notionPublishStatus}
+                          onChange={(e) => setNotionPublishStatus(e.target.value as any)}
+                          className="bg-white border border-slate-200 text-xs p-2.5 outline-none rounded-xl focus:ring-1 focus:ring-slate-500 w-full font-extrabold text-slate-800 cursor-pointer"
+                        >
+                          <option value="draft">Save as Draft (Safe)</option>
+                          <option value="published">Publish Instantly (Live Schema)</option>
+                          <option value="scheduled">Schedule Post (Autopilot Worker)</option>
+                        </select>
+                      </div>
+
+                      {/* Sub-item: Specific Target Database (Fallback override) */}
+                      <div className="space-y-1">
+                        <label className="block text-[10px] font-black uppercase text-slate-500">Specific Destination Database ID (Override)</label>
+                        <input 
+                          type="text"
+                          value={notionCustomDatabaseId}
+                          onChange={(e) => setNotionCustomDatabaseId(e.target.value)}
+                          placeholder="e.g. leave empty to use active linked integration database"
+                          className="bg-white border border-slate-205 text-xs p-2.5 outline-none rounded-xl focus:ring-1 focus:ring-slate-500 w-full font-mono text-slate-700 text-[11px]"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Conditional scheduling picker */}
+                    {notionPublishStatus === 'scheduled' && (
+                      <div className="bg-amber-50/50 border border-amber-100 p-3.5 rounded-xl space-y-2 animate-slide-up">
+                        <div className="flex items-start gap-2">
+                          <Clock className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                          <div>
+                            <span className="block text-xs font-bold text-amber-800">Background Schedule Core (Continuous Worker Mode)</span>
+                            <span className="block text-[10px] text-slate-550 leading-relaxed font-semibold">
+                              The background task daemon tracks UTC time coordinates continuously firing scheduled requests.
+                            </span>
+                          </div>
+                        </div>
+                        <div className="pt-1.5 flex items-center gap-3">
+                          <label className="text-[10px] font-black uppercase text-amber-800 inline-block shrink-0">Release Timestamp (Local Time):</label>
+                          <input 
+                            type="datetime-local"
+                            value={notionScheduledTime}
+                            onChange={(e) => setNotionScheduledTime(e.target.value)}
+                            className="bg-white border border-amber-200 text-xs p-2 outline-none rounded-xl font-bold text-slate-700 cursor-pointer"
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* WORDPRESS.COM CMS METADATA CONFIGURATION PANEL */}
+                {selectedPublishPlatform === 'wordpress_com' && (
+                  <div className="bg-slate-50 border border-slate-150 p-4 rounded-3xl mt-4 space-y-4 animate-fade-in font-sans">
+                    <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                      <span className="text-xs font-black uppercase text-slate-800 tracking-wider flex items-center gap-1.5">
+                        <Globe className="h-4 w-4 text-blue-600" />
+                        WordPress.com Post Structure Configurations
+                      </span>
+                      <span className="text-[10px] text-slate-400 font-bold">Tune post metadata properties prior to deployment</span>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {/* Sub-item: WordPress.com Slug */}
+                      <div className="space-y-1">
+                        <label className="block text-[10px] font-black uppercase text-slate-500">Resource URL Slug Property</label>
+                        <input 
+                          type="text"
+                          value={wordpressComSlug}
+                          onChange={(e) => setWordpressComSlug(e.target.value)}
+                          placeholder="slug-value-here"
+                          className="bg-white border border-slate-200 text-xs p-2.5 outline-none rounded-xl focus:ring-1 focus:ring-slate-500 w-full font-mono font-bold text-slate-700"
+                        />
+                      </div>
+
+                      {/* Sub-item: WordPress.com Tags */}
+                      <div className="space-y-1">
+                        <label className="block text-[10px] font-black uppercase text-slate-500">Post Tags (Comma Separated)</label>
+                        <input 
+                          type="text"
+                          value={wordpressComTags}
+                          onChange={(e) => setWordpressComTags(e.target.value)}
+                          placeholder="e.g. SEO, AI, Blogging"
+                          className="bg-white border border-slate-200 text-xs p-2.5 outline-none rounded-xl focus:ring-1 focus:ring-slate-500 w-full text-slate-705 font-semibold"
+                        />
+                      </div>
+
+                      {/* Sub-item: Publish Status */}
+                      <div className="space-y-1">
+                        <label className="block text-[10px] font-black uppercase text-slate-500">Default Post Status</label>
+                        <select 
+                          value={wordpressComPublishStatus}
+                          onChange={(e) => setWordpressComPublishStatus(e.target.value as any)}
+                          className="bg-white border border-slate-200 text-xs p-2.5 outline-none rounded-xl focus:ring-1 focus:ring-slate-500 w-full font-extrabold text-slate-800 cursor-pointer"
+                        >
+                          <option value="draft">Save as Draft (Safe)</option>
+                          <option value="published">Publish Instantly (Live Blog)</option>
+                          <option value="scheduled">Schedule Post (Autopilot Queue)</option>
+                        </select>
+                      </div>
+
+                      {/* Sub-item: Specific Blog Override ID */}
+                      <div className="space-y-1">
+                        <label className="block text-[10px] font-black uppercase text-slate-500">Target WordPress Blog ID (Override Optional)</label>
+                        <input 
+                          type="text"
+                          value={wordpressComSelectedSiteId}
+                          onChange={(e) => setWordpressComSelectedSiteId(e.target.value)}
+                          placeholder="e.g. leave blank to use connected site"
+                          className="bg-white border border-slate-205 text-xs p-2.5 outline-none rounded-xl focus:ring-1 focus:ring-slate-500 w-full font-mono text-slate-700 text-[11px]"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Conditional scheduling picker */}
+                    {wordpressComPublishStatus === 'scheduled' && (
+                      <div className="bg-amber-50/50 border border-amber-100 p-3.5 rounded-xl space-y-2 animate-slide-up">
+                        <div className="flex items-start gap-2">
+                          <Clock className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                          <div>
+                            <span className="block text-xs font-bold text-amber-800">WordPress continuous automated queue</span>
+                            <span className="block text-[10px] text-slate-550 leading-relaxed font-semibold">
+                              Determines when our background worker queue pushes the generated article.
+                            </span>
+                          </div>
+                        </div>
+                        <div className="pt-1.5 flex items-center gap-3">
+                          <label className="text-[10px] font-black uppercase text-amber-800 inline-block shrink-0">Release Timestamp (Local Time):</label>
+                          <input 
+                            type="datetime-local"
+                            value={wordpressComScheduledTime}
+                            onChange={(e) => setWordpressComScheduledTime(e.target.value)}
+                            className="bg-white border border-amber-200 text-xs p-2 outline-none rounded-xl font-bold text-slate-700 cursor-pointer"
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* NEXT.JS CMS METADATA CONFIGURATION PANEL */}
+                {selectedPublishPlatform === 'nextjs' && (
+                  <div className="bg-slate-50 border border-slate-150 p-4 rounded-3xl mt-4 space-y-4 animate-fade-in font-sans">
+                    <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                      <span className="text-xs font-black uppercase text-slate-800 tracking-wider flex items-center gap-1.5">
+                        <Github className="h-4 w-4 text-slate-800" />
+                        Next.js Blog Sync Structures
+                      </span>
+                      <span className="text-[10px] text-slate-400 font-bold">Tune publication parameters prior to synchronization</span>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {/* Sub-item: Nextjs Slug */}
+                      <div className="space-y-1">
+                        <label className="block text-[10px] font-black uppercase text-slate-500">File slug (Generated URL Segment)</label>
+                        <input 
+                          type="text"
+                          value={nextjsSlug}
+                          onChange={(e) => setNextjsSlug(e.target.value)}
+                          placeholder="e.g. dynamic-article-seo-slug"
+                          className="bg-white border border-slate-200 text-xs p-2.5 outline-none rounded-xl focus:ring-1 focus:ring-slate-500 w-full font-mono font-bold text-slate-700"
+                        />
+                      </div>
+
+                      {/* Sub-item: Nextjs Tags */}
+                      <div className="space-y-1">
+                        <label className="block text-[10px] font-black uppercase text-slate-500">Post Tags (Comma separated)</label>
+                        <input 
+                          type="text"
+                          value={nextjsTags}
+                          onChange={(e) => setNextjsTags(e.target.value)}
+                          placeholder="e.g. SEO, AI Generated, Nextjs"
+                          className="bg-white border border-slate-200 text-xs p-2.5 outline-none rounded-xl focus:ring-1 focus:ring-slate-500 w-full text-slate-705 font-semibold"
+                        />
+                      </div>
+
+                      {/* Sub-item: Nextjs Publish status default */}
+                      <div className="space-y-1">
+                        <label className="block text-[10px] font-black uppercase text-slate-500">Post Release Policy</label>
+                        <select 
+                          value={nextjsPublishStatus}
+                          onChange={(e) => setNextjsPublishStatus(e.target.value as any)}
+                          className="bg-white border border-slate-200 text-xs p-2.5 outline-none rounded-xl focus:ring-1 focus:ring-slate-500 w-full font-extrabold text-slate-800 cursor-pointer"
+                        >
+                          <option value="draft">Save as Draft (File metadata indicates draft)</option>
+                          <option value="published">Publish Instantly (File metadata indicates published)</option>
+                          <option value="scheduled">Schedule Commit Release</option>
+                        </select>
+                      </div>
+
+                      {/* Sub-item: Nextjs Custom Format */}
+                      <div className="space-y-1">
+                        <label className="block text-[10px] font-black uppercase text-slate-500">Output File Format Override</label>
+                        <select 
+                          value={nextjsOutputFormat}
+                          onChange={(e) => setNextjsOutputFormat(e.target.value as any)}
+                          className="bg-white border border-slate-200 text-xs p-2.5 outline-none rounded-xl focus:ring-1 focus:ring-slate-500 w-full font-extrabold text-slate-850 cursor-pointer"
+                        >
+                          <option value="mdx">MDX Content Format (.mdx)</option>
+                          <option value="markdown">Markdown flat-file (.md)</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Conditional scheduling picker */}
+                    {nextjsPublishStatus === 'scheduled' && (
+                      <div className="bg-amber-50/50 border border-amber-100 p-3.5 rounded-xl space-y-2 animate-slide-up">
+                        <div className="flex items-start gap-2">
+                          <Clock className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                          <div>
+                            <span className="block text-xs font-bold text-amber-800">Next.js automated deployment release timer</span>
+                            <span className="block text-[10px] text-slate-550 leading-relaxed font-semibold">
+                              RankSyncer background workers will schedule a GitHub push command targeting this exact date.
+                            </span>
+                          </div>
+                        </div>
+                        <div className="pt-1.5 flex items-center gap-3">
+                          <label className="text-[10px] font-black uppercase text-amber-800 inline-block shrink-0">Release Timestamp (Local Time):</label>
+                          <input 
+                            type="datetime-local"
+                            value={nextjsScheduledTime}
+                            onChange={(e) => setNextjsScheduledTime(e.target.value)}
+                            className="bg-white border border-amber-200 text-xs p-2 outline-none rounded-xl font-bold text-slate-700 cursor-pointer"
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 <div className="flex items-center justify-end gap-2 border-t border-slate-100 pt-4 mt-4 font-sans">
                   <button 
                     type="button"
@@ -5690,14 +6483,45 @@ export default function App() {
                     disabled={isPublishingToCms}
                     onClick={() => {
                       if (selectedPublishPlatform === 'ghost') {
-                        handleActiveCmsPublish(publishingArticle, 'ghost', {
+                        handleActiveCmsPublish(publishingArticle!, 'ghost', {
                           slug: ghostSlug,
                           status: ghostPublishStatus,
                           scheduledPublishTime: ghostPublishStatus === 'scheduled' ? new Date(ghostScheduledTime).toISOString() : undefined,
                           tags: ghostTags.split(',').map(t => t.trim()).filter(Boolean)
                         });
+                      } else if (selectedPublishPlatform === 'framer') {
+                        handleActiveCmsPublish(publishingArticle!, 'framer', {
+                          slug: framerSlug,
+                          status: framerPublishStatus,
+                          scheduledPublishTime: framerPublishStatus === 'scheduled' ? new Date(framerScheduledTime).toISOString() : undefined,
+                          tags: framerTags.split(',').map(t => t.trim()).filter(Boolean)
+                        });
+                      } else if (selectedPublishPlatform === 'notion') {
+                        handleActiveCmsPublish(publishingArticle!, 'notion', {
+                          slug: notionSlug,
+                          status: notionPublishStatus,
+                          scheduledPublishTime: notionPublishStatus === 'scheduled' ? new Date(notionScheduledTime).toISOString() : undefined,
+                          tags: notionTags.split(',').map(t => t.trim()).filter(Boolean),
+                          customDatabaseId: notionCustomDatabaseId || undefined
+                        });
+                      } else if (selectedPublishPlatform === 'wordpress_com') {
+                        handleActiveCmsPublish(publishingArticle!, 'wordpress_com', {
+                          slug: wordpressComSlug,
+                          status: wordpressComPublishStatus,
+                          scheduledPublishTime: wordpressComPublishStatus === 'scheduled' ? new Date(wordpressComScheduledTime).toISOString() : undefined,
+                          tags: wordpressComTags.split(',').map(t => t.trim()).filter(Boolean)
+                        });
+                      } else if (selectedPublishPlatform === 'nextjs') {
+                        handleActiveCmsPublish(publishingArticle!, 'nextjs', {
+                          slug: nextjsSlug,
+                          status: nextjsPublishStatus,
+                          scheduledPublishTime: nextjsPublishStatus === 'scheduled' ? new Date(nextjsScheduledTime).toISOString() : undefined,
+                          tags: nextjsTags.split(',').map(t => t.trim()).filter(Boolean),
+                          outputFormat: nextjsOutputFormat,
+                          routingStyle: nextjsRoutingStyle
+                        });
                       } else {
-                        handleActiveCmsPublish(publishingArticle, selectedPublishPlatform);
+                        handleActiveCmsPublish(publishingArticle!, selectedPublishPlatform);
                       }
                     }}
                     className="px-5 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-extrabold rounded-xl transition cursor-pointer shadow flex items-center justify-center gap-2 min-w-[120px] disabled:bg-blue-300"
@@ -5709,7 +6533,7 @@ export default function App() {
                       </>
                     ) : (
                       <>
-                        <span>{ghostPublishStatus === 'scheduled' ? 'Schedule Release' : 'Publish Post'}</span>
+                        <span>{((selectedPublishPlatform === 'ghost' ? ghostPublishStatus : selectedPublishPlatform === 'framer' ? framerPublishStatus : selectedPublishPlatform === 'notion' ? notionPublishStatus : selectedPublishPlatform === 'nextjs' ? nextjsPublishStatus : wordpressComPublishStatus) === 'scheduled') ? 'Schedule Release' : 'Publish Post'}</span>
                         <Send className="h-3 w-3" />
                       </>
                     )}

@@ -28,9 +28,10 @@ interface OutrankLandingProps {
   onLaunchApp: () => void;
   projectsCount: number;
   onPricingClick?: () => void;
+  onIntegrationsClick?: () => void;
 }
 
-export default function OutrankLanding({ onLaunchApp, projectsCount, onPricingClick }: OutrankLandingProps) {
+export default function OutrankLanding({ onLaunchApp, projectsCount, onPricingClick, onIntegrationsClick }: OutrankLandingProps) {
   // Interactive States for landing page features
   const [typedKeyword, setTypedKeyword] = useState('best micro saas ideas 2026');
   const [playgroundKeyword, setPlaygroundKeyword] = useState('');
@@ -126,7 +127,7 @@ export default function OutrankLanding({ onLaunchApp, projectsCount, onPricingCl
       </div>
 
       {/* Navigation Header */}
-      <header className="sticky top-0 z-40 bg-[#faf8f9]/85 backdrop-blur-md border-b border-emerald-100/35 relative z-15">
+      <header className="sticky top-0 z-50 bg-[#faf8f9]/85 backdrop-blur-md border-b border-emerald-100/35">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-18 flex items-center justify-between">
           
           {/* Brand Logo */}
@@ -136,8 +137,14 @@ export default function OutrankLanding({ onLaunchApp, projectsCount, onPricingCl
 
           {/* Desktop Navigation */}
           <nav className="hidden md:flex items-center space-x-8 text-sm font-semibold text-slate-600">
-            <a href="#how-it-works" className="hover:text-emerald-600 transition-colors">How it Works</a>
+            <a href="#how-it-works" className="hover:text-emerald-600 transition-colors">How It Works</a>
             <a href="#features" className="hover:text-emerald-600 transition-colors">Features</a>
+            <button 
+              onClick={onIntegrationsClick} 
+              className="hover:text-emerald-600 transition-colors cursor-pointer text-left bg-transparent border-none font-semibold text-sm text-slate-600"
+            >
+              Integrations
+            </button>
             <a href="#playground" className="hover:text-emerald-600 transition-colors">AI Playground</a>
             <button 
               onClick={() => onPricingClick ? onPricingClick() : document.getElementById('pricing')?.scrollIntoView({ behavior: 'smooth' })} 

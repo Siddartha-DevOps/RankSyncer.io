@@ -17,6 +17,39 @@ import {
   startCmsQueueWorker,
   convertMarkdownToGhostHtml
 } from "./src/lib/seo/cmsService";
+import {
+  readFramerDb,
+  writeFramerDb,
+  encryptFramerToken,
+  decryptFramerToken,
+  publishToFramer,
+  startFramerQueueWorker
+} from "./src/lib/seo/framerService";
+import {
+  readNotionDb,
+  writeNotionDb,
+  encryptNotionToken,
+  decryptNotionToken,
+  syncToNotion,
+  startNotionQueueWorker
+} from "./src/lib/seo/notionService";
+import {
+  readWordpressComDb,
+  writeWordpressComDb,
+  encryptWordpressToken,
+  decryptWordpressToken,
+  publishToWordpressCom,
+  startWordpressComQueueWorker,
+  convertMarkdownToWordpressHtml
+} from "./src/lib/seo/wordpressComService";
+import {
+  readNextjsDb,
+  writeNextjsDb,
+  encryptGithubToken,
+  decryptGithubToken,
+  pushArticleToGithub,
+  startNextjsQueueWorker
+} from "./src/lib/seo/nextjsService";
 
 // Initialize Stripe Client Lazily/Safely
 let stripeClient: any = null;
@@ -1229,6 +1262,161 @@ app.post("/api/cms/publish", async (req, res) => {
         timestamp: new Date().toISOString()
       });
 
+    } else if (platform === "framer") {
+      let apiToken = credentials?.apiToken || credentials?.token || "";
+      let siteId = credentials?.siteId || credentials?.framerSiteId || "";
+      let collectionId = credentials?.collectionId || credentials?.framerCollectionId || "";
+
+      if (!apiToken || !siteId || !collectionId) {
+        // Look up from saved framer integrations
+        const db = readFramerDb();
+        const found = db.framer_integrations.find(i => i.project_id === (article.projectId || req.body.projectId) && i.is_active);
+        if (found) {
+          apiToken = decryptFramerToken(found.encrypted_api_token);
+          siteId = found.framer_site_id;
+          collectionId = found.framer_collection_id;
+        } else {
+          throw new Error("Missing Framer CMS connection details (Workspace/Site Token and Collection info). Please connect in the integration panel first!");
+        }
+      }
+
+      console.log(`[CMS PUBLISH]: Connecting Framer Sites API. Site: ${siteId}, Collection: ${collectionId}`);
+      const resVal = await publishToFramer({
+        userId: userId,
+        projectId: article.projectId || req.body.projectId || "default",
+        article: {
+          id: article.id || `art-${Date.now()}`,
+          title: article.title,
+          slug: article.slug,
+          content: article.content,
+          metaDescription: article.metaDescription,
+          featureImage: article.featureImage,
+          targetKeyword: article.targetKeyword,
+          tags: article.tags
+        },
+        siteId,
+        collectionId,
+        apiToken,
+        status: req.body.status || "draft",
+        scheduledPublishTime: req.body.scheduledPublishTime,
+        isSandbox: isSandbox
+      });
+
+      if (!resVal.success) {
+        throw new Error(resVal.error || "Failed transferring article post to Framer CMS collection.");
+      }
+
+      return res.json({
+        success: true,
+        isSimulated: isSandbox || siteId.includes("mock") || siteId.includes("example"),
+        publishedUrl: resVal.publishedUrl,
+        cmsPostId: resVal.cmsPostId,
+        timestamp: new Date().toISOString()
+      });
+
+    } else if (platform === "notion") {
+      let apiToken = credentials?.apiToken || credentials?.token || "";
+      let databaseId = credentials?.databaseId || credentials?.notionDatabaseId || req.body.databaseId || req.body.customDatabaseId || "";
+
+      if (!apiToken || !databaseId) {
+        // Look up from saved notion integrations
+        const db = readNotionDb();
+        const found = db.notion_integrations.find(i => i.project_id === (article.projectId || req.body.projectId) && i.is_active);
+        if (found) {
+          apiToken = decryptNotionToken(found.encrypted_api_token);
+          if (!databaseId) {
+            databaseId = found.notion_database_id;
+          }
+        } else {
+          throw new Error("Missing Notion CMS connection details (Database ID and integration token). Please connect in the integration panel first!");
+        }
+      }
+
+      console.log(`[CMS PUBLISH]: Connecting Notion DB ID: ${databaseId}`);
+      const resVal = await syncToNotion({
+        userId: userId,
+        projectId: article.projectId || req.body.projectId || "default",
+        article: {
+          id: article.id || `art-${Date.now()}`,
+          title: article.title,
+          slug: article.slug,
+          content: article.content,
+          metaDescription: article.metaDescription,
+          featureImage: article.featureImage,
+          targetKeyword: article.targetKeyword,
+          tags: article.tags
+        },
+        databaseId,
+        apiToken,
+        isSandbox: isSandbox
+      });
+
+      if (!resVal.success) {
+        throw new Error(resVal.error || "Failed transferring article post to Notion database.");
+      }
+
+      return res.json({
+        success: true,
+        isSimulated: isSandbox || databaseId.includes("mock") || databaseId.includes("example"),
+        publishedUrl: resVal.publishedUrl,
+        cmsPostId: resVal.notionPageId,
+        timestamp: new Date().toISOString()
+      });
+
+    } else if (platform === "wordpress_com") {
+      let accessToken = credentials?.accessToken || credentials?.token || "";
+      let wordpressSiteId = credentials?.siteId || req.body.siteId || req.body.wordpressSiteId || "";
+
+      if (!accessToken || !wordpressSiteId) {
+        // Look up from saved wordpress_com integrations
+        const db = readWordpressComDb();
+        const found = db.wordpress_com_integrations.find(i => 
+          i.project_id === (article.projectId || req.body.projectId) && 
+          (wordpressSiteId ? i.wordpress_site_id === wordpressSiteId : i.is_active)
+        );
+        if (found) {
+          accessToken = decryptWordpressToken(found.encrypted_access_token);
+          if (!wordpressSiteId) {
+            wordpressSiteId = found.wordpress_site_id;
+          }
+        } else {
+          throw new Error("Missing active WordPress.com connection details. Please connect your blog in the integration panel first!");
+        }
+      }
+
+      console.log(`[CMS PUBLISH WP.com]: Connecting WordPress.com site ID: ${wordpressSiteId}`);
+      const resVal = await publishToWordpressCom({
+        userId: userId,
+        projectId: article.projectId || req.body.projectId || "default",
+        article: {
+          id: article.id || `art-${Date.now()}`,
+          title: article.title,
+          slug: article.slug,
+          content: article.content,
+          metaDescription: article.metaDescription,
+          featureImage: article.featureImage,
+          targetKeyword: article.targetKeyword,
+          tags: article.tags
+        },
+        wordpressSiteId,
+        accessToken,
+        status: req.body.status === "scheduled" ? "schedule" : (req.body.status || "draft"),
+        scheduledPublishTime: req.body.scheduledPublishTime,
+        isSandbox: isSandbox
+      });
+
+      if (!resVal.success) {
+        throw new Error(resVal.error || "Failed transferring article post to WordPress.com site.");
+      }
+
+      return res.json({
+        success: true,
+        isSimulated: isSandbox || wordpressSiteId.includes("mock") || wordpressSiteId.includes("example"),
+        publishedUrl: resVal.publishedUrl,
+        cmsPostId: resVal.wordpressPostId,
+        timestamp: new Date().toISOString()
+      });
+
     } else {
       throw new Error(`Unsupported live CMS target platform: ${platform}`);
     }
@@ -2429,6 +2617,1505 @@ app.post("/api/cms/ghost/cancel-scheduled", (req, res) => {
   return res.json({
     success: true,
     message: "Cancelled scheduled release successfully."
+  });
+});
+
+
+// ==========================================
+// FRAMER CMS INTEGRATION APIS
+// ==========================================
+
+// 1. Get Framer connected details
+app.get("/api/cms/framer/integrations", (req, res) => {
+  const { projectId } = req.query;
+  if (!projectId) {
+    return res.status(400).json({ error: "Missing required projectId query." });
+  }
+
+  const db = readFramerDb();
+  const integrations = db.framer_integrations.filter(i => i.project_id === projectId && i.is_active);
+
+  return res.json({
+    success: true,
+    integrations: integrations.map(i => ({
+      id: i.id,
+      user_id: i.user_id,
+      project_id: i.project_id,
+      framer_site_id: i.framer_site_id,
+      framer_collection_id: i.framer_collection_id,
+      framer_project_name: i.framer_project_name,
+      framer_collection_name: i.framer_collection_name,
+      created_at: i.created_at,
+      is_active: i.is_active
+    }))
+  });
+});
+
+// 2. Authorize & Link Framer site
+app.post("/api/cms/framer/connect", async (req, res) => {
+  const { projectId, userId, siteId, collectionId, apiToken, isSandbox } = req.body;
+
+  if (!projectId || !siteId || !collectionId || !apiToken) {
+    return res.status(400).json({ error: "Missing required Framer connection parameters." });
+  }
+
+  const cleanSiteId = siteId.trim();
+  const cleanCollectionId = collectionId.trim();
+  const cleanToken = apiToken.trim();
+
+  const isMock = isSandbox || cleanSiteId.toLowerCase().includes("mock") || cleanSiteId.toLowerCase().includes("example") || cleanToken === "mock-framer-api-token";
+
+  try {
+    if (!isMock) {
+      // Validate credentials against real Framer Sites API (collections list endpoint)
+      const endpoint = `https://api.framer.com/v1/projects/${cleanSiteId}/collections`;
+      console.log(`[FRAMER INTROSPECT]: Authorizing workspace token at: ${endpoint}`);
+
+      const response = await fetch(endpoint, {
+        method: "GET",
+        headers: {
+          "Authorization": `Bearer ${cleanToken}`,
+          "Content-Type": "application/json"
+        },
+        timeout: 6000
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        throw new Error(`Framer API validation check failed. Status: ${response.status}. Reply: ${errText}`);
+      }
+
+      // Check if requested collectionId is found inside listed endpoints
+      const collectionsData = await response.json() as any;
+      const collectionsList = collectionsData?.collections || [];
+      const collectionMatch = collectionsList.find((c: any) => c.id === cleanCollectionId);
+
+      if (!collectionMatch && collectionsList.length > 0) {
+        throw new Error(`Framer site connection works, but Collection ID '${cleanCollectionId}' was not found. Available Collection IDs: ${collectionsList.map((c: any) => c.id).join(", ")}`);
+      }
+    } else {
+      await new Promise(resolve => setTimeout(resolve, 500)); // simulates round-trip latency
+    }
+
+    const encryptedToken = encryptFramerToken(cleanToken);
+    const db = readFramerDb();
+
+    // Deactivate previous identical site/collection to prevent conflicts
+    db.framer_integrations = db.framer_integrations.map(i => {
+      if (i.project_id === projectId && i.framer_site_id === cleanSiteId) {
+        return { ...i, is_active: false };
+      }
+      return i;
+    });
+
+    const newInteg: FramerIntegration = {
+      id: `fint-${crypto.randomUUID()}`,
+      user_id: userId || "anonymous",
+      project_id: projectId,
+      framer_site_id: cleanSiteId,
+      framer_collection_id: cleanCollectionId,
+      encrypted_api_token: encryptedToken,
+      framer_project_name: isMock ? "Demo Framer Blog Portal" : `Framer Site (${cleanSiteId})`,
+      framer_collection_name: isMock ? "CMS Articles" : `Collection (${cleanCollectionId})`,
+      created_at: new Date().toISOString(),
+      is_active: true
+    };
+
+    db.framer_integrations.push(newInteg);
+    writeFramerDb(db);
+
+    console.log(`[FRAMER INTEG SUCCESS]: Linked site ID ${cleanSiteId} (Collection ${cleanCollectionId}) to project ${projectId}`);
+    return res.json({
+      success: true,
+      message: `Successfully connected Framer CMS Site collection. Ready for SEO publishing.`,
+      integration: {
+        id: newInteg.id,
+        framer_site_id: newInteg.framer_site_id,
+        framer_project_name: newInteg.framer_project_name,
+        framer_collection_name: newInteg.framer_collection_name
+      }
+    });
+
+  } catch (err: any) {
+    console.error("[FRAMER CONNECTION EXCEPTION]:", err);
+    return res.status(401).json({
+      success: false,
+      error: err.message || "Failed validating Framer credentials."
+    });
+  }
+});
+
+// 3. Disconnect Integrations for Framer
+app.post("/api/cms/framer/disconnect", (req, res) => {
+  const { projectId, framerSiteId } = req.body;
+
+  if (!projectId) {
+    return res.status(400).json({ error: "Missing required projectId Parameter." });
+  }
+
+  const db = readFramerDb();
+  if (framerSiteId) {
+    db.framer_integrations = db.framer_integrations.filter(i => !(i.project_id === projectId && i.framer_site_id === framerSiteId));
+  } else {
+    db.framer_integrations = db.framer_integrations.filter(i => i.project_id !== projectId);
+  }
+
+  writeFramerDb(db);
+  return res.json({
+    success: true,
+    message: "Framer Site integration disconnected successfully."
+  });
+});
+
+// 4. Fetch publish transaction logs
+app.get("/api/cms/framer/logs", (req, res) => {
+  const { projectId } = req.query;
+  if (!projectId) {
+    return res.status(400).json({ error: "Missing required projectId query." });
+  }
+
+  const db = readFramerDb();
+  const logs = db.framer_publish_logs
+    .filter(log => log.project_id === projectId)
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+  return res.json({
+    success: true,
+    logs
+  });
+});
+
+// 5. Get scheduled publish queue items
+app.get("/api/cms/framer/queue", (req, res) => {
+  const { projectId } = req.query;
+  if (!projectId) {
+    return res.status(400).json({ error: "Missing required projectId query." });
+  }
+
+  const db = readFramerDb();
+  const queue = db.framer_publish_queue
+    .filter(item => item.project_id === projectId)
+    .sort((a, b) => new Date(a.scheduled_publish_time).getTime() - new Date(b.scheduled_publish_time).getTime());
+
+  return res.json({
+    success: true,
+    queue
+  });
+});
+
+// 6. Schedule future publishing release for Framer
+app.post("/api/cms/framer/schedule", (req, res) => {
+  const { projectId, userId, articleId, siteId, collectionId, scheduledPublishTime } = req.body;
+
+  if (!projectId || !articleId || !siteId || !collectionId || !scheduledPublishTime) {
+    return res.status(400).json({ error: "Missing required scheduling arguments." });
+  }
+
+  const db = readFramerDb();
+  const pendingItem: FramerPublishQueueItem = {
+    id: `fpqi-${crypto.randomUUID()}`,
+    user_id: userId || "anonymous",
+    project_id: projectId,
+    article_id: articleId,
+    framer_site_id: siteId,
+    framer_collection_id: collectionId,
+    scheduled_publish_time: new Date(scheduledPublishTime).toISOString(),
+    publish_status: "pending",
+    attempt_count: 0,
+    created_at: new Date().toISOString()
+  };
+
+  db.framer_publish_queue.push(pendingItem);
+  writeFramerDb(db);
+
+  return res.json({
+    success: true,
+    message: `Article scheduled for Framer CMS automatic release on ${new Date(scheduledPublishTime).toLocaleString()}`,
+    item: pendingItem
+  });
+});
+
+// 7. Cancel scheduled publishing block
+app.post("/api/cms/framer/cancel-scheduled", (req, res) => {
+  const { itemId } = req.body;
+  if (!itemId) {
+    return res.status(400).json({ error: "Missing required itemId." });
+  }
+
+  const db = readFramerDb();
+  const originalLen = db.framer_publish_queue.length;
+  db.framer_publish_queue = db.framer_publish_queue.filter(qi => qi.id !== itemId);
+
+  if (db.framer_publish_queue.length === originalLen) {
+    return res.status(404).json({ error: "Scheduled publishing item not found." });
+  }
+
+  writeFramerDb(db);
+  return res.json({
+    success: true,
+    message: "Cancelled scheduled Framer CMS release successfully."
+  });
+});
+
+
+// ==========================================
+// NOTION CMS INTEGRATION APIS
+// ==========================================
+
+// 1. Get Notion connected details
+app.get("/api/cms/notion/integrations", (req, res) => {
+  const { projectId } = req.query;
+  if (!projectId) {
+    return res.status(400).json({ error: "Missing required projectId query." });
+  }
+
+  const db = readNotionDb();
+  const integrations = db.notion_integrations.filter(i => i.project_id === projectId && i.is_active);
+
+  return res.json({
+    success: true,
+    integrations: integrations.map(i => ({
+      id: i.id,
+      user_id: i.user_id,
+      project_id: i.project_id,
+      notion_workspace_name: i.notion_workspace_name,
+      notion_workspace_icon: i.notion_workspace_icon,
+      notion_database_name: i.notion_database_name,
+      notion_database_id: i.notion_database_id,
+      created_at: i.created_at,
+      is_active: i.is_active
+    }))
+  });
+});
+
+// 2. Authorize & Link Notion Database Workspace
+app.post("/api/cms/notion/connect", async (req, res) => {
+  const { projectId, userId, databaseId, apiToken, isSandbox, workspaceName, databaseName } = req.body;
+
+  if (!projectId || !databaseId || !apiToken) {
+    return res.status(400).json({ error: "Missing required Notion connection parameters." });
+  }
+
+  const cleanDatabaseId = databaseId.trim();
+  const cleanToken = apiToken.trim();
+
+  const isMock = isSandbox || cleanDatabaseId.toLowerCase().includes("mock") || cleanToken === "mock-notion-token";
+
+  try {
+    let resolvedDbName = databaseName || `Database (${cleanDatabaseId.slice(-6).toUpperCase()})`;
+    let resolvedWorkspaceName = workspaceName || "Notion Workspace";
+
+    if (!isMock) {
+      // Validate credentials against real Notion Database API
+      const endpoint = `https://api.notion.com/v1/databases/${cleanDatabaseId}`;
+      console.log(`[NOTION INTROSPECT]: Authorizing Workspace Secret at: ${endpoint}`);
+
+      const response = await fetch(endpoint, {
+        method: "GET",
+        headers: {
+          "Authorization": `Bearer ${cleanToken}`,
+          "Notion-Version": "2022-06-28",
+          "Content-Type": "application/json"
+        }
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        throw new Error(`Notion Database verification failed (Code ${response.status}). Keep in mind you must explicitly share your Database page with your connection in your Notion settings wrapper! Response: ${errText}`);
+      }
+
+      const resData = await response.json() as any;
+      if (resData && resData.title) {
+        resolvedDbName = resData.title.map((t: any) => t.plain_text).join("") || resolvedDbName;
+      }
+    } else {
+      await new Promise(resolve => setTimeout(resolve, 500)); // latency simulation
+    }
+
+    const encryptedToken = encryptNotionToken(cleanToken);
+    const db = readNotionDb();
+
+    // Deactivate previous identical databases to make room for current one
+    db.notion_integrations = db.notion_integrations.map(i => {
+      if (i.project_id === projectId && i.notion_database_id === cleanDatabaseId) {
+        return { ...i, is_active: false };
+      }
+      return i;
+    });
+
+    const newInteg: NotionIntegration = {
+      id: `nint-${crypto.randomUUID()}`,
+      user_id: userId || "anonymous",
+      project_id: projectId,
+      notion_database_id: cleanDatabaseId,
+      encrypted_api_token: encryptedToken,
+      notion_workspace_name: resolvedWorkspaceName,
+      notion_database_name: resolvedDbName,
+      created_at: new Date().toISOString(),
+      is_active: true
+    };
+
+    db.notion_integrations.push(newInteg);
+    writeNotionDb(db);
+
+    console.log(`[NOTION INTEG SUCCESS]: Linked Notion Database ID ${cleanDatabaseId} to project ${projectId}`);
+    return res.json({
+      success: true,
+      message: `Successfully authenticated and linked Notion Database "${resolvedDbName}".`,
+      integration: {
+        id: newInteg.id,
+        notion_database_id: newInteg.notion_database_id,
+        notion_workspace_name: newInteg.notion_workspace_name,
+        notion_database_name: newInteg.notion_database_name
+      }
+    });
+
+  } catch (err: any) {
+    console.error("[NOTION CONNECTION EXCEPTION]:", err);
+    return res.status(401).json({
+      success: false,
+      error: err.message || "Failed validating Notion workspace capabilities."
+    });
+  }
+});
+
+// 3. Disconnect Notion Database
+app.post("/api/cms/notion/disconnect", (req, res) => {
+  const { projectId, databaseId } = req.body;
+
+  if (!projectId) {
+    return res.status(400).json({ error: "Missing required projectId Parameter." });
+  }
+
+  const db = readNotionDb();
+  if (databaseId) {
+    db.notion_integrations = db.notion_integrations.filter(i => !(i.project_id === projectId && i.notion_database_id === databaseId));
+  } else {
+    db.notion_integrations = db.notion_integrations.filter(i => i.project_id !== projectId);
+  }
+
+  writeNotionDb(db);
+  return res.json({
+    success: true,
+    message: "Notion Workspace Database disconnected successfully."
+  });
+});
+
+// 4. Fetch Sync history logs
+app.get("/api/cms/notion/logs", (req, res) => {
+  const { projectId } = req.query;
+  if (!projectId) {
+    return res.status(400).json({ error: "Missing required projectId query." });
+  }
+
+  const db = readNotionDb();
+  const logs = db.notion_sync_logs
+    .filter(log => log.project_id === projectId)
+    .sort((a, b) => new Date(b.synced_at).getTime() - new Date(a.synced_at).getTime());
+
+  return res.json({
+    success: true,
+    logs
+  });
+});
+
+// 5. Get scheduled sync queue lists
+app.get("/api/cms/notion/queue", (req, res) => {
+  const { projectId } = req.query;
+  if (!projectId) {
+    return res.status(400).json({ error: "Missing required projectId query." });
+  }
+
+  const db = readNotionDb();
+  const queue = db.notion_sync_queue
+    .filter(item => item.project_id === projectId)
+    .sort((a, b) => new Date(a.scheduled_sync_time).getTime() - new Date(b.scheduled_sync_time).getTime());
+
+  return res.json({
+    success: true,
+    queue
+  });
+});
+
+// 6. Schedule future automated Notion publishing
+app.post("/api/cms/notion/schedule", (req, res) => {
+  const { projectId, userId, articleId, databaseId, scheduledSyncTime } = req.body;
+
+  if (!projectId || !articleId || !databaseId || !scheduledSyncTime) {
+    return res.status(400).json({ error: "Missing required scheduling arguments." });
+  }
+
+  const db = readNotionDb();
+  const pendingItem: NotionSyncQueueItem = {
+    id: `nsqi-${crypto.randomUUID()}`,
+    user_id: userId || "anonymous",
+    project_id: projectId,
+    article_id: articleId,
+    notion_database_id: databaseId,
+    scheduled_sync_time: new Date(scheduledSyncTime).toISOString(),
+    sync_status: "pending",
+    attempt_count: 0,
+    created_at: new Date().toISOString()
+  };
+
+  db.notion_sync_queue.push(pendingItem);
+  writeNotionDb(db);
+
+  return res.json({
+    success: true,
+    message: `Article scheduled for Notion Database synchronization on ${new Date(scheduledSyncTime).toLocaleString()}`,
+    item: pendingItem
+  });
+});
+
+// 7. Cancel scheduled sync block
+app.post("/api/cms/notion/cancel-scheduled", (req, res) => {
+  const { itemId } = req.body;
+  if (!itemId) {
+    return res.status(400).json({ error: "Missing required itemId." });
+  }
+
+  const db = readNotionDb();
+  const originalLen = db.notion_sync_queue.length;
+  db.notion_sync_queue = db.notion_sync_queue.filter(qi => qi.id !== itemId);
+
+  if (db.notion_sync_queue.length === originalLen) {
+    return res.status(404).json({ error: "Scheduled sync queue item not found." });
+  }
+
+  writeNotionDb(db);
+  return res.json({
+    success: true,
+    message: "Cancelled scheduled Notion sync successfully."
+  });
+});
+
+// 8. One-click Live/Sandbox Sync Now
+app.post("/api/cms/notion/sync-now", async (req, res) => {
+  const { projectId, userId, article, databaseId, apiToken, isSandbox } = req.body;
+
+  if (!projectId || !article || !databaseId) {
+    return res.status(400).json({ error: "Missing required synchronization elements." });
+  }
+
+  try {
+    let activeToken = apiToken;
+    if (!activeToken) {
+      // Lookup active token
+      const db = readNotionDb();
+      const integ = db.notion_integrations.find(i => i.project_id === projectId && i.notion_database_id === databaseId && i.is_active);
+      if (!integ) {
+        return res.status(404).json({ error: "No active Notion credential token found for this Database ID." });
+      }
+      activeToken = decryptNotionToken(integ.encrypted_api_token);
+    }
+
+    const result = await syncToNotion({
+      userId: userId || "anonymous",
+      projectId,
+      article,
+      databaseId,
+      apiToken: activeToken,
+      isSandbox: !!isSandbox
+    });
+
+    return res.json(result);
+  } catch (err: any) {
+    return res.status(500).json({
+      success: false,
+      error: err.message || "Failed synchronization steps."
+    });
+  }
+});
+
+// 9. Bulk sync endpoint
+app.post("/api/cms/notion/bulk-sync", async (req, res) => {
+  const { projectId, userId, articles, databaseId, isSandbox } = req.body;
+
+  if (!projectId || !articles || !Array.isArray(articles) || !databaseId) {
+    return res.status(400).json({ error: "Missing required bulk sync variables." });
+  }
+
+  const db = readNotionDb();
+  const integration = db.notion_integrations.find(i => i.project_id === projectId && i.notion_database_id === databaseId && i.is_active);
+
+  if (!integration && !isSandbox) {
+    return res.status(404).json({ error: "No active integration linked found for this Notion database." });
+  }
+
+  const apiToken = integration ? decryptNotionToken(integration.encrypted_api_token) : "mock-notion-token";
+  const results: any[] = [];
+
+  // Parallel synchronous simulation processing
+  for (const article of articles) {
+    try {
+      const outcome = await syncToNotion({
+        userId: userId || "anonymous",
+        projectId,
+        article,
+        databaseId,
+        apiToken,
+        isSandbox: !!isSandbox
+      });
+      results.push({ articleId: article.id, outcome });
+    } catch (e: any) {
+      results.push({ articleId: article.id, error: e.message });
+    }
+  }
+
+  return res.json({
+    success: true,
+    total: articles.length,
+    results
+  });
+});
+
+
+// ==========================================
+// 🔴 WORDPRESS.COM HOSTED DIRECT INTEGRATION ENDPOINTS
+// ==========================================
+
+// 1. Fetch connected sites selector integrations for a project
+app.get("/api/cms/wordpress/integrations", (req, res) => {
+  const { projectId } = req.query;
+  if (!projectId) {
+    return res.status(400).json({ error: "Missing required projectId query." });
+  }
+
+  const db = readWordpressComDb();
+  const integrations = db.wordpress_com_integrations.filter(i => i.project_id === projectId && i.is_active);
+
+  return res.json({
+    success: true,
+    integrations: integrations.map(i => ({
+      id: i.id,
+      user_id: i.user_id,
+      project_id: i.project_id,
+      wordpress_site_id: i.wordpress_site_id,
+      wordpress_site_url: i.wordpress_site_url,
+      wordpress_site_name: i.wordpress_site_name,
+      created_at: i.created_at,
+      is_active: i.is_active
+    }))
+  });
+});
+
+// 2. Connect a simulated Sandbox WordPress.com Blog
+app.post("/api/cms/wordpress/connect-mock", (req, res) => {
+  const { projectId, userId, siteUrl, siteName, siteId } = req.body;
+
+  if (!projectId) {
+    return res.status(400).json({ error: "Missing required projectId Parameter." });
+  }
+
+  const resolvedSiteId = siteId || `mock-wp-${Math.floor(Math.random() * 100000) + 100}`;
+  const resolvedSiteUrl = siteUrl || "sandbox-authority.wordpress.com";
+  const resolvedSiteName = siteName || "My Sandbox SEO Blog";
+
+  const db = readWordpressComDb();
+
+  // Check Billing Multi-Site selection limit for Free tier
+  const dbW = readWatermarkDb();
+  const activeUserId = userId || "anonymous";
+  const subStatus = dbW.user_subscriptions[activeUserId]?.status || "free";
+  const projectActiveIntegCount = db.wordpress_com_integrations.filter(i => i.project_id === projectId && i.is_active).length;
+
+  if (subStatus === "free" && projectActiveIntegCount >= 1) {
+    return res.status(403).json({
+      success: false,
+      error: "RankSyncer Free Plan is restricted to 1 active WordPress.com site connector. Upgrade to Premium for multi-site publishing support!"
+    });
+  }
+
+  // Deactivate matching site id to update cleanly
+  db.wordpress_com_integrations = db.wordpress_com_integrations.map(i => {
+    if (i.project_id === projectId && i.wordpress_site_id === resolvedSiteId) {
+      return { ...i, is_active: false };
+    }
+    return i;
+  });
+
+  const newInteg: WordpressComIntegration = {
+    id: `wpint-${crypto.randomUUID()}`,
+    user_id: activeUserId,
+    project_id: projectId,
+    wordpress_site_id: resolvedSiteId,
+    wordpress_site_url: resolvedSiteUrl,
+    wordpress_site_name: resolvedSiteName,
+    encrypted_access_token: encryptWordpressToken("mock-wordpress-token"),
+    created_at: new Date().toISOString(),
+    is_active: true
+  };
+
+  db.wordpress_com_integrations.push(newInteg);
+  writeWordpressComDb(db);
+
+  return res.json({
+    success: true,
+    message: `Connected WordPress.com sandbox site "${resolvedSiteName}" successfully.`,
+    integration: {
+      id: newInteg.id,
+      wordpress_site_id: newInteg.wordpress_site_id,
+      wordpress_site_url: newInteg.wordpress_site_url,
+      wordpress_site_name: newInteg.wordpress_site_name
+    }
+  });
+});
+
+// 3. Disconnect WordPress.com site
+app.post("/api/cms/wordpress/disconnect", (req, res) => {
+  const { projectId, wordpressSiteId } = req.body;
+
+  if (!projectId) {
+    return res.status(400).json({ error: "Missing required projectId Parameter." });
+  }
+
+  const db = readWordpressComDb();
+  if (wordpressSiteId) {
+    db.wordpress_com_integrations = db.wordpress_com_integrations.filter(i => !(i.project_id === projectId && i.wordpress_site_id === wordpressSiteId));
+  } else {
+    db.wordpress_com_integrations = db.wordpress_com_integrations.filter(i => i.project_id !== projectId);
+  }
+
+  writeWordpressComDb(db);
+  return res.json({
+    success: true,
+    message: "WordPress.com site disconnected successfully."
+  });
+});
+
+// 4. Retrieve publishing history log entries
+app.get("/api/cms/wordpress/logs", (req, res) => {
+  const { projectId } = req.query;
+  if (!projectId) {
+    return res.status(400).json({ error: "Missing required projectId query." });
+  }
+
+  const db = readWordpressComDb();
+  const logs = db.wordpress_com_publish_logs
+    .filter(log => log.project_id === projectId)
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+  return res.json({
+    success: true,
+    logs
+  });
+});
+
+// 5. Get scheduled publish queue items
+app.get("/api/cms/wordpress/queue", (req, res) => {
+  const { projectId } = req.query;
+  if (!projectId) {
+    return res.status(400).json({ error: "Missing required projectId query." });
+  }
+
+  const db = readWordpressComDb();
+  const queue = db.wordpress_com_publish_queue
+    .filter(item => item.project_id === projectId)
+    .sort((a, b) => new Date(a.scheduled_publish_time).getTime() - new Date(b.scheduled_publish_time).getTime());
+
+  return res.json({
+    success: true,
+    queue
+  });
+});
+
+// 6. Queue future scheduled automated releases
+app.post("/api/cms/wordpress/schedule", (req, res) => {
+  const { projectId, userId, articleId, wordpressSiteId, scheduledPublishTime } = req.body;
+
+  if (!projectId || !articleId || !wordpressSiteId || !scheduledPublishTime) {
+    return res.status(400).json({ error: "Missing required scheduling parameters." });
+  }
+
+  const dbW = readWatermarkDb();
+  const activeUserId = userId || "anonymous";
+  const subStatus = dbW.user_subscriptions[activeUserId]?.status || "free";
+
+  if (subStatus === "free") {
+    return res.status(403).json({
+      success: false,
+      error: "RankSyncer's background Scheduled Release queue is a Premium subscription feature. Upgrade your plan to unlock scheduled hands-free autopilot releasing!"
+    });
+  }
+
+  const db = readWordpressComDb();
+  const pendingJob: WordpressComPublishQueueItem = {
+    id: `wpq-${crypto.randomUUID()}`,
+    user_id: activeUserId,
+    project_id: projectId,
+    article_id: articleId,
+    wordpress_site_id: wordpressSiteId,
+    scheduled_publish_time: new Date(scheduledPublishTime).toISOString(),
+    publish_status: "pending",
+    attempt_count: 0,
+    created_at: new Date().toISOString()
+  };
+
+  db.wordpress_com_publish_queue.push(pendingJob);
+  writeWordpressComDb(db);
+
+  return res.json({
+    success: true,
+    message: `Article post queued for native WordPress.com release successfully at ${new Date(scheduledPublishTime).toLocaleString()}`,
+    item: pendingJob
+  });
+});
+
+// 7. Cancel scheduled future release
+app.post("/api/cms/wordpress/cancel-scheduled", (req, res) => {
+  const { itemId } = req.body;
+  if (!itemId) {
+    return res.status(400).json({ error: "Missing required itemId." });
+  }
+
+  const db = readWordpressComDb();
+  const originalLen = db.wordpress_com_publish_queue.length;
+  db.wordpress_com_publish_queue = db.wordpress_com_publish_queue.filter(qi => qi.id !== itemId);
+
+  if (db.wordpress_com_publish_queue.length === originalLen) {
+    return res.status(404).json({ error: "Scheduled release job not found in active queues." });
+  }
+
+  writeWordpressComDb(db);
+  return res.json({
+    success: true,
+    message: "Cancelled scheduled release successfully."
+  });
+});
+
+// 8. One-click Live Sync Now (Instant publish / update)
+app.post("/api/cms/wordpress/sync-now", async (req, res) => {
+  const { projectId, userId, article, wordpressSiteId, isSandbox } = req.body;
+
+  if (!projectId || !article || !wordpressSiteId) {
+    return res.status(400).json({ error: "Missing required sync action parameters." });
+  }
+
+  const dbW = readWatermarkDb();
+  const activeUserId = userId || "anonymous";
+  const subStatus = dbW.user_subscriptions[activeUserId]?.status || "free";
+
+  // Check Billing Access limit for Free Users
+  if (subStatus === "free") {
+    const db = readWordpressComDb();
+    const successfulPubLogs = db.wordpress_com_publish_logs.filter(
+      log => log.user_id === activeUserId && log.publish_status === "success"
+    ).length;
+
+    if (successfulPubLogs >= 5) {
+      return res.status(403).json({
+        success: false,
+        error: "RankSyncer Free Plan is capped at 5 direct WordPress.com publishes. Upgrade to RankSyncer Premium for unlimited syndication, scheduled publishing, and multi-site support!"
+      });
+    }
+  }
+
+  try {
+    const db = readWordpressComDb();
+    const integration = db.wordpress_com_integrations.find(
+      i => i.project_id === projectId && i.wordpress_site_id === wordpressSiteId && i.is_active
+    );
+
+    if (!integration && !isSandbox) {
+      return res.status(404).json({ error: "Active WordPress.com credentials not found for this site ID." });
+    }
+
+    const accessToken = integration ? decryptWordpressToken(integration.encrypted_access_token) : "mock-wordpress-token";
+
+    const result = await publishToWordpressCom({
+      userId: activeUserId,
+      projectId,
+      article,
+      wordpressSiteId,
+      accessToken,
+      status: req.body.status || "publish",
+      scheduledPublishTime: req.body.scheduledPublishTime,
+      isSandbox: !integration || !!isSandbox
+    });
+
+    return res.json(result);
+
+  } catch (err: any) {
+    return res.status(500).json({
+      success: false,
+      error: err.message || "Failed post deployment steps."
+    });
+  }
+});
+
+// 9. WordPress.com Analytics and Connection Health KPI Tracker
+app.post("/api/cms/wordpress/analytics", (req, res) => {
+  const { projectId } = req.body;
+  if (!projectId) {
+    return res.status(400).json({ error: "Missing required projectId." });
+  }
+
+  const db = readWordpressComDb();
+  const logs = db.wordpress_com_publish_logs.filter(log => log.project_id === projectId);
+  const queue = db.wordpress_com_publish_queue.filter(q => q.project_id === projectId);
+  const integrations = db.wordpress_com_integrations.filter(i => i.project_id === projectId && i.is_active);
+
+  const successfulCount = logs.filter(l => l.publish_status === "success").length;
+  const failedCount = logs.filter(l => l.publish_status === "failed").length;
+  const scheduledCount = queue.filter(q => q.publish_status === "pending").length;
+
+  // Connection Health Index - calculated on success rates of last 10 publishes
+  const lastTenPublishes = logs.slice(0, 10);
+  let healthPercent = 100;
+  if (lastTenPublishes.length > 0) {
+    const successRate = lastTenPublishes.filter(l => l.publish_status === "success").length / lastTenPublishes.length;
+    healthPercent = Math.round(successRate * 100);
+  } else if (integrations.length === 0) {
+    healthPercent = 0; // Not connected
+  }
+
+  // Generate chart data mapping publishes count per day for the last 7 calendar days
+  const chartData: { day: string; Publishes: number }[] = [];
+  const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    const dayName = days[d.getDay()];
+    // format as YYYY-MM-DD
+    const dateStr = d.toISOString().split("T")[0];
+    
+    const countOnDay = logs.filter(l => l.publish_status === "success" && l.created_at.startsWith(dateStr)).length;
+    chartData.push({
+      day: dayName,
+      Publishes: countOnDay
+    });
+  }
+
+  return res.json({
+    success: true,
+    stats: {
+      totalPublishes: successfulCount + failedCount,
+      successfulPublishes: successfulCount,
+      failedPublishes: failedCount,
+      scheduledPublishes: scheduledCount,
+      connectionHealth: healthPercent,
+      activeBlogsCount: integrations.length
+    },
+    chartData
+  });
+});
+
+// 10. Generate Authorize Grant URL for Official OAuth
+app.get("/api/auth/wordpress/url", (req, res) => {
+  const { projectId, userId } = req.query;
+  if (!projectId) {
+    return res.status(400).json({ error: "Missing required 'projectId' for OAuth pipeline state registration." });
+  }
+
+  const clientId = process.env.WORDPRESS_CLIENT_ID || "56123"; // sandbox client ID fallback
+  const redirectUri = `${req.protocol}://${req.get("host")}/api/auth/wordpress/callback`;
+  const state = `${projectId}::${userId || "anonymous"}`;
+
+  const authorizeUrl = `https://public-api.wordpress.com/oauth2/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&state=${encodeURIComponent(state)}&scope=posts`;
+
+  return res.json({
+    success: true,
+    url: authorizeUrl
+  });
+});
+
+// 11. Core OAuth redirect callback handler
+app.get(["/api/auth/wordpress/callback", "/api/auth/wordpress/callback/"], async (req, res) => {
+  const { code, state, error, error_description } = req.query;
+
+  if (error) {
+    return res.status(400).send(`
+      <html>
+        <body style="font-family: sans-serif; text-align: center; padding: 50px; background-color: #f8fafc; color: #0f172a;">
+          <h2 style="color: #ef4444;">WordPress.com Authorization Aborted</h2>
+          <p>\${error_description || error}</p>
+          <button onclick="window.close()" style="margin-top: 20px; padding: 10px 20px; background: #3b82f6; color: white; border: none; border-radius: 8px; font-weight: bold; cursor: pointer;">Close Window</button>
+        </body>
+      </html>
+    `);
+  }
+
+  if (!code) {
+    return res.status(400).send("Access code missing from WordPress callback handler query parameters.");
+  }
+
+  try {
+    const cleanCode = String(code).trim();
+    const stateStr = String(state || "");
+    const [projectId = "default", userId = "anonymous"] = stateStr.split("::");
+
+    const clientId = process.env.WORDPRESS_CLIENT_ID || "56123";
+    const clientSecret = process.env.WORDPRESS_CLIENT_SECRET || "ranksyncer_wp_placeholder_secret_code_112233";
+    const redirectUri = `${req.protocol}://${req.get("host")}/api/auth/wordpress/callback`;
+
+    console.log(`[WP.com OAUTH CALLBACK]: Negotiating Authorization Grant code for Token exchange...`);
+
+    let accessToken = "mock-wordpress-token";
+    let connectedSites: any[] = [];
+
+    const isSandboxEnv = (!process.env.WORDPRESS_CLIENT_ID || process.env.WORDPRESS_CLIENT_ID === "56123");
+
+    if (!isSandboxEnv) {
+      // 1. Post code grant to exchange for WP.com API Access Token
+      const tokenUrl = "https://public-api.wordpress.com/oauth2/token";
+      const tokenBody = new URLSearchParams({
+        client_id: clientId,
+        client_secret: clientSecret,
+        grant_type: "authorization_code",
+        code: cleanCode,
+        redirect_uri: redirectUri
+      }).toString();
+
+      const exchangeResponse = await fetch(tokenUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded"
+        },
+        body: tokenBody
+      });
+
+      if (!exchangeResponse.ok) {
+        const errorText = await exchangeResponse.text();
+        throw new Error(`WordPress.com code token exchange rejected status \${exchangeResponse.status}: \${errorText}`);
+      }
+
+      const tokenJson = await exchangeResponse.json() as any;
+      accessToken = tokenJson.access_token || "";
+
+      if (!accessToken) {
+        throw new Error("Unable to recover valid secure access_token field from WordPress OAuth.");
+      }
+
+      // 2. Query WordPress.com sites list authorized with this token
+      const meSitesUrl = "https://public-api.wordpress.com/rest/v1.1/me/sites";
+      const sitesResponse = await fetch(meSitesUrl, {
+        method: "GET",
+        headers: {
+          "Authorization": `Bearer \${accessToken}`
+        }
+      });
+
+      if (sitesResponse.ok) {
+        const sitesJson = await sitesResponse.json() as any;
+        connectedSites = sitesJson.sites || [];
+      }
+    } else {
+      // In sandbox mode, populate mock sites list
+      connectedSites = [
+        {
+          ID: "mock-site-a",
+          name: "My Tech Authority Blog",
+          URL: "https://techauthority.wordpress.com",
+          description: "Calibrated with RankSyncer SEO parameters"
+        },
+        {
+          ID: "mock-site-b",
+          name: "Green Future Reviews",
+          URL: "https://greenfuture.wordpress.com",
+          description: "Affiliated blog directory site"
+        }
+      ];
+    }
+
+    if (connectedSites.length === 0) {
+      throw new Error("Your authenticated account does not seem to contain any active WordPress.com blogs.");
+    }
+
+    const encryptedToken = encryptWordpressToken(accessToken);
+    const db = readWordpressComDb();
+
+    // Link connected sites as project integrations
+    for (const site of connectedSites) {
+      const siteId = String(site.ID || site.id);
+      const siteUrl = site.URL || site.url || "wordpress-blog.com";
+      const siteName = site.name || "Connected WordPress.com Blog";
+
+      // Deactivate identical site record
+      db.wordpress_com_integrations = db.wordpress_com_integrations.map(existing => {
+        if (existing.project_id === projectId && existing.wordpress_site_id === siteId) {
+          return { ...existing, is_active: false };
+        }
+        return existing;
+      });
+
+      db.wordpress_com_integrations.push({
+        id: `wpint-\${crypto.randomUUID()}`,
+        user_id: userId,
+        project_id: projectId,
+        wordpress_site_id: siteId,
+        wordpress_site_url: siteUrl,
+        wordpress_site_name: siteName,
+        encrypted_access_token: encryptedToken,
+        created_at: new Date().toISOString(),
+        is_active: true
+      });
+    }
+
+    writeWordpressComDb(db);
+
+    // Communicate back via postMessage iframe communication safely
+    res.send(`
+      <html>
+        <body style="font-family: sans-serif; text-align: center; padding: 60px; background-color: #f8fafc; color: #0f172a;">
+          <div style="max-width: 400px; margin: 0 auto; padding: 30px; background: white; border-radius: 12px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);">
+            <div style="font-size: 48px; margin-bottom: 20px;">✅</div>
+            <h2 style="color: #10b981; margin-bottom: 10px;">Authorization Successful!</h2>
+            <p style="color: #64748b; font-size: 14px; margin-bottom: 25px;">Successfully synced your WordPress.com blogs with RankSyncer.</p>
+            <script>
+              if (window.opener) {
+                window.opener.postMessage({ type: 'WORDPRESS_COM_AUTH_SUCCESS' }, '*');
+                setTimeout(function() {
+                  window.close();
+                }, 1000);
+              } else {
+                window.location.href = '/';
+              }
+            </script>
+            <p style="color: #94a3b8; font-size: 12px;">This window will close automatically.</p>
+          </div>
+        </body>
+      </html>
+    `);
+
+  } catch (err: any) {
+    console.error("[WP OAUTH CALLBACK ERROR]:", err);
+    res.status(500).send(`
+      <html>
+        <body style="font-family: sans-serif; text-align: center; padding: 50px; background-color: #f8fafc; color: #0f172a;">
+          <h2 style="color: #ef4444;">WordPress.com Authorization Failed</h2>
+          <p style="color: #64748b;">\${err.message || 'Error executing OAuth procedures'}</p>
+          <button onclick="window.close()" style="margin-top: 20px; padding: 10px 20px; background: #3b82f6; color: white; border: none; border-radius: 8px; font-weight: bold; cursor: pointer;">Close Window</button>
+        </body>
+      </html>
+    `);
+  }
+});
+
+
+// ==========================================
+// NEXT.JS API PUBLISHING REPOSITORY INTEGRATIONS
+// ==========================================
+
+// 1. Get Connected Next.js repositories/integrations
+app.get("/api/cms/nextjs/integrations", (req, res) => {
+  const { projectId } = req.query;
+  if (!projectId) {
+    return res.status(400).json({ error: "Missing required projectId query." });
+  }
+
+  const db = readNextjsDb();
+  const integrations = db.nextjs_integrations.filter(i => i.project_id === projectId && i.is_active);
+
+  return res.json({
+    success: true,
+    integrations: integrations.map(i => ({
+      id: i.id,
+      user_id: i.user_id,
+      project_id: i.project_id,
+      repository_id: i.repository_id,
+      repository_name: i.repository_name,
+      target_branch: i.target_branch,
+      content_folder: i.content_folder,
+      output_format: i.output_format,
+      routing_style: i.routing_style,
+      vercel_webhook_url: i.vercel_webhook_url,
+      blog_site_url: i.blog_site_url,
+      created_at: i.created_at,
+      is_active: i.is_active
+    }))
+  });
+});
+
+// 2. Connect a Next.js blog or repository (Supports both real GitHub PAT and Sandbox mode)
+app.post("/api/cms/nextjs/connect", (req, res) => {
+  const { 
+    projectId, 
+    userId, 
+    githubToken, 
+    repositoryName, 
+    repositoryId, 
+    targetBranch, 
+    contentFolder, 
+    outputFormat, 
+    routingStyle, 
+    vercelWebhookUrl, 
+    blogSiteUrl,
+    isSandbox 
+  } = req.body;
+
+  if (!projectId) {
+    return res.status(400).json({ error: "Missing required projectId fields." });
+  }
+  if (!repositoryName) {
+    return res.status(400).json({ error: "Missing required repositoryName field." });
+  }
+
+  const tokenVal = githubToken || "mock-github-token";
+  const encryptedToken = encryptGithubToken(tokenVal);
+  const activeUserId = userId || "anonymous";
+
+  const db = readNextjsDb();
+
+  // Check Billing plan limitations
+  const dbW = readWatermarkDb();
+  const subStatus = dbW.user_subscriptions[activeUserId]?.status || "free";
+  const projectActiveIntegCount = db.nextjs_integrations.filter(i => i.project_id === projectId && i.is_active).length;
+
+  if (subStatus === "free" && projectActiveIntegCount >= 1) {
+    return res.status(403).json({
+      success: false,
+      error: "RankSyncer Free Plan limits to 1 active Next.js repository connector. Upgrade to Pro Premium for multi-site publishing support!"
+    });
+  }
+
+  // Deactivate any existing integration matching the same repository name inside this project
+  db.nextjs_integrations = db.nextjs_integrations.map(existing => {
+    if (existing.project_id === projectId && existing.repository_name === repositoryName) {
+      return { ...existing, is_active: false };
+    }
+    return existing;
+  });
+
+  const nextInteg = {
+    id: `nxint-\${crypto.randomUUID()}`,
+    user_id: activeUserId,
+    project_id: projectId,
+    encrypted_github_token: encryptedToken,
+    repository_id: repositoryId || `repo-\${Math.floor(Math.random() * 900000) + 10000}`,
+    repository_name: repositoryName,
+    target_branch: targetBranch || "main",
+    content_folder: contentFolder || "posts",
+    output_format: outputFormat || "mdx",
+    routing_style: routingStyle || "app",
+    vercel_webhook_url: vercelWebhookUrl || undefined,
+    blog_site_url: blogSiteUrl || undefined,
+    created_at: new Date().toISOString(),
+    is_active: true
+  };
+
+  db.nextjs_integrations.push(nextInteg);
+  writeNextjsDb(db);
+
+  return res.json({
+    success: true,
+    message: isSandbox 
+      ? "Simulated Next.js repository connected successfully in sandbox mode!" 
+      : "Active Next.js GitHub repository node linked and synced perfectly!",
+    integration: {
+      id: nextInteg.id,
+      repository_name: nextInteg.repository_name,
+      target_branch: nextInteg.target_branch,
+      content_folder: nextInteg.content_folder,
+      output_format: nextInteg.output_format,
+      routing_style: nextInteg.routing_style
+    }
+  });
+});
+
+// 3. Disconnect a Next.js Integration node
+app.post("/api/cms/nextjs/disconnect", (req, res) => {
+  const { projectId, repositoryName } = req.body;
+
+  if (!projectId || !repositoryName) {
+    return res.status(400).json({ error: "Missing required parameters (projectId, repositoryName)." });
+  }
+
+  const db = readNextjsDb();
+  let deactivatedCount = 0;
+
+  db.nextjs_integrations = db.nextjs_integrations.map(existing => {
+    if (existing.project_id === projectId && existing.repository_name === repositoryName) {
+      deactivatedCount++;
+      return { ...existing, is_active: false };
+    }
+    return existing;
+  });
+
+  writeNextjsDb(db);
+
+  return res.json({
+    success: true,
+    message: `Removed \${deactivatedCount} Next.js repository nodes from active publishing targets.`
+  });
+});
+
+// 4. Get Publish logs for Next.js
+app.get("/api/cms/nextjs/logs", (req, res) => {
+  const { projectId } = req.query;
+  if (!projectId) {
+    return res.status(400).json({ error: "Missing required projectId query." });
+  }
+
+  const db = readNextjsDb();
+  const logs = db.nextjs_publish_logs.filter(log => log.project_id === projectId);
+
+  return res.json({
+    success: true,
+    logs: logs.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+  });
+});
+
+// 5. Get Scheduler Queue list
+app.get("/api/cms/nextjs/queue", (req, res) => {
+  const { projectId } = req.query;
+  if (!projectId) {
+    return res.status(400).json({ error: "Missing required projectId query." });
+  }
+
+  const db = readNextjsDb();
+  const queue = db.nextjs_publish_queue.filter(q => q.project_id === projectId);
+
+  return res.json({
+    success: true,
+    queue: queue.sort((a, b) => new Date(a.scheduled_publish_time).getTime() - new Date(b.scheduled_publish_time).getTime())
+  });
+});
+
+// 6. Add scheduler job queue item
+app.post("/api/cms/nextjs/schedule", (req, res) => {
+  const { projectId, userId, articleId, repositoryName, scheduledPublishTime, outputFormat, routingStyle } = req.body;
+
+  if (!projectId || !articleId || !repositoryName || !scheduledPublishTime) {
+    return res.status(400).json({ error: "Missing required scheduler parameters." });
+  }
+
+  const db = readNextjsDb();
+
+  const nextJob = {
+    id: `nxjob-\${crypto.randomUUID()}`,
+    user_id: userId || "anonymous",
+    project_id: projectId,
+    article_id: articleId,
+    repository_name: repositoryName,
+    scheduled_publish_time: new Date(scheduledPublishTime).toISOString(),
+    publish_status: "pending",
+    deployment_status: "pending",
+    attempt_count: 0,
+    created_at: new Date().toISOString(),
+    output_format_override: outputFormat,
+    routing_style_override: routingStyle
+  };
+
+  db.nextjs_publish_queue.push(nextJob);
+  writeNextjsDb(db);
+
+  return res.json({
+    success: true,
+    message: `Successfully scheduled Next.js file push for \${new Date(scheduledPublishTime).toLocaleString()}`
+  });
+});
+
+// 7. Cancel a scheduled publication
+app.post("/api/cms/nextjs/cancel-scheduled", (req, res) => {
+  const { itemId } = req.body;
+  if (!itemId) {
+    return res.status(400).json({ error: "Missing target job ID." });
+  }
+
+  const db = readNextjsDb();
+  const job = db.nextjs_publish_queue.find(q => q.id === itemId);
+
+  if (!job) {
+    return res.status(404).json({ error: "Scheduled publishing job could not be located." });
+  }
+
+  db.nextjs_publish_queue = db.nextjs_publish_queue.filter(q => q.id !== itemId);
+  writeNextjsDb(db);
+
+  return res.json({
+    success: true,
+    message: "Scheduled document sync aborted successfully."
+  });
+});
+
+// 8. Pull list of GitHub repositories using private access keys
+app.post("/api/cms/nextjs/github-repos", async (req, res) => {
+  const { githubToken, isSandbox } = req.body;
+  if (isSandbox || !githubToken || githubToken === "mock-github-token") {
+    return res.json({
+      success: true,
+      repos: [
+        { id: "101", name: "siddu/ranksyncer-nextjs-blog", default_branch: "main" },
+        { id: "102", name: "siddu/vercel-blog-starter", default_branch: "master" },
+        { id: "103", name: "seo-labs/outrank-nextjs-ssr", default_branch: "main" }
+      ]
+    });
+  }
+  try {
+    const response = await fetch("https://api.github.com/user/repos?per_page=100&sort=updated", {
+      headers: {
+        Authorization: `Bearer \${githubToken}`,
+        Accept: "application/vnd.github.v3+json",
+        "User-Agent": "RankSyncer-SEO-Core"
+      }
+    });
+    if (!response.ok) {
+      throw new Error(`GitHub responded with status code: \${response.status}`);
+    }
+    const data = await response.json() as any[];
+    const repos = data.map(r => ({
+      id: String(r.id),
+      name: r.full_name || r.name,
+      default_branch: r.default_branch || "main"
+    }));
+    return res.json({ success: true, repos });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message || "Failed loading repositories." });
+  }
+});
+
+// 9. Fetch GitHub branches list of connected repositories
+app.post("/api/cms/nextjs/github-branches", async (req, res) => {
+  const { githubToken, repositoryName, isSandbox } = req.body;
+  if (!repositoryName) {
+    return res.status(400).json({ error: "Missing required 'repositoryName' value." });
+  }
+  if (isSandbox || !githubToken || githubToken === "mock-github-token" || repositoryName.toLowerCase().includes("mock")) {
+    return res.json({
+      success: true,
+      branches: [
+        { name: "main" },
+        { name: "master" },
+        { name: "development" },
+        { name: "production" }
+      ]
+    });
+  }
+  try {
+    const response = await fetch(`https://api.github.com/repos/\${repositoryName}/branches`, {
+      headers: {
+        Authorization: `Bearer \${githubToken}`,
+        Accept: "application/vnd.github.v3+json",
+        "User-Agent": "RankSyncer-SEO-Core"
+      }
+    });
+    if (!response.ok) {
+      throw new Error(`GitHub branch request rejected with code: \${response.status}`);
+    }
+    const data = await response.json() as any[];
+    const branches = data.map(b => ({ name: b.name }));
+    return res.json({ success: true, branches });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message || "Failed loading branch list." });
+  }
+});
+
+// 10. Direct Sync Now API (Trigger Markdown/MDX sync instantly)
+app.post("/api/cms/nextjs/sync-now", async (req, res) => {
+  const { projectId, userId, article, repositoryName, isSandbox } = req.body;
+
+  if (!projectId || !article || !repositoryName) {
+    return res.status(400).json({ error: "Missing required sync information fields." });
+  }
+
+  try {
+    const db = readNextjsDb();
+    const integration = db.nextjs_integrations.find(
+      i => i.repository_name === repositoryName && i.project_id === projectId && i.is_active
+    );
+
+    if (!integration) {
+      throw new Error("Active integration matching this repository name and project domain could not be found.");
+    }
+
+    const payloadArticle = {
+      id: article.id || `art-\${Date.now()}`,
+      title: article.title || "Untitled Next.js Article",
+      slug: article.slug || "untitled-slug",
+      content: article.content || "Placeholder content",
+      summary: article.summary,
+      metaDescription: article.metaDescription,
+      featureImage: article.featureImage || article.coverImage,
+      primaryKeyword: article.primaryKeyword,
+      tags: article.tags || [],
+      status: article.status || "published",
+      publishDate: article.publishDate || new Date().toISOString().split("T")[0],
+      author: article.author || "SEO Copywriter"
+    };
+
+    const result = await pushArticleToGithub({
+      userId: userId || "anonymous",
+      projectId,
+      article: payloadArticle,
+      integration,
+      isSandbox: isSandbox || integration.encrypted_github_token === "mock-github-token"
+    });
+
+    if (result.success) {
+      return res.json({
+        success: true,
+        message: "Successfully synchronized generated page content to blog starter codebase!",
+        commitSha: result.commitSha,
+        url: result.publishedUrl
+      });
+    } else {
+      return res.status(500).json({
+        success: false,
+        error: result.error || "GitHub commit transaction failed."
+      });
+    }
+
+  } catch (err: any) {
+    return res.status(500).json({
+      success: false,
+      error: err.message || "Execution exception encountered during Markdown deploy steps."
+    });
+  }
+});
+
+// 11. Next.js Analytics KPI summaries
+app.post("/api/cms/nextjs/analytics", (req, res) => {
+  const { projectId } = req.body;
+  if (!projectId) {
+    return res.status(400).json({ error: "Missing required projectId." });
+  }
+
+  const db = readNextjsDb();
+  const logs = db.nextjs_publish_logs.filter(log => log.project_id === projectId);
+  const queue = db.nextjs_publish_queue.filter(q => q.project_id === projectId);
+  const integrations = db.nextjs_integrations.filter(i => i.project_id === projectId && i.is_active);
+
+  const successfulCount = logs.filter(l => l.publish_status === "success").length;
+  const failedCount = logs.filter(l => l.publish_status === "failed").length;
+  const scheduledCount = queue.filter(q => q.publish_status === "pending").length;
+
+  const lastTen = logs.slice(0, 10);
+  let healthPercent = 100;
+  if (lastTen.length > 0) {
+    const successRate = lastTen.filter(l => l.publish_status === "success").length / lastTen.length;
+    healthPercent = Math.round(successRate * 100);
+  } else if (integrations.length === 0) {
+    healthPercent = 0;
+  }
+
+  // 7 Days Chart Data
+  const chartData: { day: string; Publishes: number }[] = [];
+  const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    const dayName = days[d.getDay()];
+    const dateStr = d.toISOString().split("T")[0];
+    
+    const countOnDay = logs.filter(l => l.publish_status === "success" && l.created_at.startsWith(dateStr)).length;
+    chartData.push({
+      day: dayName,
+      Publishes: countOnDay
+    });
+  }
+
+  return res.json({
+    success: true,
+    stats: {
+      totalPublishes: successfulCount + failedCount,
+      successfulPublishes: successfulCount,
+      failedPublishes: failedCount,
+      scheduledPublishes: scheduledCount,
+      connectionHealth: healthPercent,
+      activeBlogsCount: integrations.length
+    },
+    chartData
   });
 });
 
@@ -6763,6 +8450,18 @@ async function startServer() {
 
   // Initialize Scheduled Ghost publishing background worker
   startCmsQueueWorker();
+  
+  // Initialize Scheduled Framer publishing background worker
+  startFramerQueueWorker();
+
+  // Initialize Scheduled Notion publishing background worker
+  startNotionQueueWorker();
+
+  // Initialize Scheduled WordPress.com publishing background worker
+  startWordpressComQueueWorker();
+
+  // Initialize Scheduled Next.js repository publishing background worker
+  startNextjsQueueWorker();
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`===============================================`);
