@@ -34,6 +34,30 @@ import {
   startNotionQueueWorker
 } from "./src/lib/seo/notionService";
 import {
+  readBacklinkDb,
+  writeBacklinkDb,
+  calculateAuthorityScore,
+  matchTwoSites,
+  generateAiContextRecommendation,
+  simulateVerifyBacklink,
+  BacklinkNetworkSite,
+  BacklinkMatch,
+  BacklinkRequest,
+  BacklinkExchange,
+  BacklinkVerification,
+  BacklinkHealthLog
+} from "./src/lib/seo/backlinkService";
+import {
+  readAuthorityDb,
+  writeAuthorityDb,
+  computeCompositeSEOStrength,
+  generateAiInsights,
+  AuthoritySnapshot,
+  AuthorityCompetitor,
+  AuthorityAlert,
+  AuthorityReport
+} from "./src/lib/seo/authorityService";
+import {
   readWordpressComDb,
   writeWordpressComDb,
   encryptWordpressToken,
@@ -3168,6 +3192,884 @@ app.post("/api/cms/notion/bulk-sync", async (req, res) => {
     total: articles.length,
     results
   });
+});
+
+
+// ==========================================
+// 🔗 BACKLINK EXCHANGE NETWORK APIS
+// ==========================================
+
+// 1. Get Backlink Dashboard state
+app.get("/api/backlink/dashboard-data", (req, res) => {
+  const { projectId, userId = "anonymous" } = req.query;
+
+  if (!projectId) {
+    return res.status(400).json({ error: "Missing required projectId query." });
+  }
+
+  const db = readBacklinkDb();
+  
+  // Find if this project is registered in the backlink network
+  const mySite = db.backlink_network_sites.find(
+    s => s.website_id === projectId && s.is_active
+  );
+
+  if (!mySite) {
+    return res.json({
+      success: true,
+      registered: false,
+      allNetworkSitesCount: db.backlink_network_sites.length
+    });
+  }
+
+  // Dynamically compute/refresh matches for this site
+  // Compare mySite against all other sites in the network
+  const otherSites = db.backlink_network_sites.filter(s => s.id !== mySite.id && s.is_active);
+  const recommendedMatches = otherSites.map(other => {
+    return matchTwoSites(mySite, other);
+  }).sort((a, b) => b.relevance_score - a.relevance_score);
+
+  // Fetch incoming exchange requests
+  const incomingRequests = db.backlink_requests.filter(
+    r => r.receiver_site_id === mySite.id && r.status === "pending"
+  ).map(req => {
+    const senderSite = db.backlink_network_sites.find(s => s.id === req.sender_site_id);
+    return {
+      ...req,
+      sender_site_name: senderSite?.domain || "Partner Site",
+      sender_niche: senderSite?.niche || "General",
+      sender_authority: senderSite?.authority_score || 40,
+      sender_country: senderSite?.country || "US",
+      sender_language: senderSite?.language || "en"
+    };
+  });
+
+  // Fetch sent requests
+  const sentRequests = db.backlink_requests.filter(
+    r => r.sender_site_id === mySite.id
+  ).map(req => {
+    const receiverSite = db.backlink_network_sites.find(s => s.id === req.receiver_site_id);
+    return {
+      ...req,
+      receiver_site_name: receiverSite?.domain || "Partner Site",
+      receiver_niche: receiverSite?.niche || "General",
+      receiver_authority: receiverSite?.authority_score || 40,
+      receiver_country: receiverSite?.country || "US",
+      receiver_language: receiverSite?.language || "en"
+    };
+  });
+
+  // Fetch active exchanges (both sent and received)
+  const approvedExchanges = db.backlink_exchanges.filter(
+    e => e.sender_site_id === mySite.id || e.receiver_site_id === mySite.id
+  ).map(ex => {
+    const sender = db.backlink_network_sites.find(s => s.id === ex.sender_site_id);
+    const receiver = db.backlink_network_sites.find(s => s.id === ex.receiver_site_id);
+    return {
+      ...ex,
+      sender_domain: sender?.domain || "Partner Site",
+      receiver_domain: receiver?.domain || "Partner Site",
+      partner_authority: ex.sender_site_id === mySite.id ? receiver?.authority_score : sender?.authority_score,
+      partner_niche: ex.sender_site_id === mySite.id ? receiver?.niche : sender?.niche
+    };
+  });
+
+  const liveBacklinks = approvedExchanges.filter(e => e.exchange_status === "live");
+  const lostBacklinks = approvedExchanges.filter(e => e.exchange_status === "broken" || e.exchange_status === "removed");
+
+  // Filter logs relevant to this site
+  const logs = db.backlink_health_logs.filter(
+    l => l.site_id === mySite.id || l.site_id === "all"
+  ).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+  // Authority score trend chart points
+  const authorityHistory = [
+    { date: "May 10", rating: Math.max(30, mySite.authority_score - 8) },
+    { date: "May 14", rating: Math.max(30, mySite.authority_score - 6) },
+    { date: "May 18", rating: Math.max(30, mySite.authority_score - 5) },
+    { date: "May 22", rating: Math.max(30, mySite.authority_score - 2) },
+    { date: "May 26", rating: mySite.authority_score }
+  ];
+
+  return res.json({
+    success: true,
+    registered: true,
+    mySite,
+    recommendedMatches,
+    incomingRequests,
+    sentRequests,
+    approvedExchanges,
+    liveBacklinksCount: liveBacklinks.length,
+    lostBacklinksCount: lostBacklinks.length,
+    healthLogs: logs,
+    allNetworkSitesCount: db.backlink_network_sites.length,
+    authorityHistory
+  });
+});
+
+// 2. Register site in Authority Exchange Network
+app.post("/api/backlink/register", (req, res) => {
+  const { projectId, userId = "anonymous", domain, niche, language, country, categories = [] } = req.body;
+
+  if (!projectId || !domain || !niche) {
+    return res.status(400).json({ error: "Domain, Niche, and Project fields are mandatory for registry." });
+  }
+
+  const db = readBacklinkDb();
+
+  // Deactivate any previous entry for this project to handle re-registrations
+  db.backlink_network_sites = db.backlink_network_sites.map(s => {
+    if (s.website_id === projectId) {
+      return { ...s, is_active: false };
+    }
+    return s;
+  });
+
+  const spamScore = Math.floor(Math.random() * 5); // very clean for new users
+  const authorityScore = calculateAuthorityScore(domain, spamScore, niche);
+
+  const newSite: BacklinkNetworkSite = {
+    id: `ns-node-${crypto.randomUUID()}`,
+    user_id: userId,
+    website_id: projectId,
+    domain: domain.trim().toLowerCase().replace(/^(https?:\/\/)?(www\.)?/, ""),
+    niche,
+    authority_score: authorityScore,
+    language: language || "en",
+    country: country || "US",
+    spam_score: spamScore,
+    is_active: true,
+    categories: categories.length > 0 ? categories : [niche.toLowerCase()],
+    backlink_profile_health: "Excellent",
+    created_at: new Date().toISOString()
+  };
+
+  db.backlink_network_sites.push(newSite);
+
+  // Add a welcoming health check log entry
+  db.backlink_health_logs.push({
+    id: `hl-log-${crypto.randomUUID()}`,
+    site_id: newSite.id,
+    log_type: "authority_growth",
+    severity: "success",
+    message: `Website "${newSite.domain}" joined RankSyncer Backlink Network. Initial Authority Score assessed at ${authorityScore}/100.`,
+    timestamp: new Date().toISOString()
+  });
+
+  writeBacklinkDb(db);
+
+  return res.json({
+    success: true,
+    message: "Successfully registered in the RankSyncer Backlink Network!",
+    site: newSite
+  });
+});
+
+// 3. Request Link Exchange
+app.post("/api/backlink/request-exchange", (req, res) => {
+  const { senderSiteId, receiverSiteId, senderUserId, targetUrl, anchorText, placementSuggestion, contextSnippet, activePlan = "free" } = req.body;
+
+  if (!senderSiteId || !receiverSiteId || !targetUrl || !anchorText) {
+    return res.status(400).json({ error: "Mandatory backlink parameters are missing." });
+  }
+
+  const db = readBacklinkDb();
+
+  // Anti-Spam protection: Check exchange limits for free/demo accounts
+  const activeRequestsCount = db.backlink_requests.filter(
+    r => r.sender_site_id === senderSiteId && (r.status === "pending" || r.status === "approved")
+  ).length;
+
+  if (activePlan === "free" && activeRequestsCount >= 3) {
+    return res.status(403).json({
+      error: "Demo plan rate limits backlink requests to 3. Upgrade to Premium for unmetered high-authority exchange requests!"
+    });
+  }
+
+  // Prevent duplicate requests to the same target domain
+  const existingRequest = db.backlink_requests.find(
+    r => r.sender_site_id === senderSiteId && r.receiver_site_id === receiverSiteId && r.status === "pending"
+  );
+  if (existingRequest) {
+    return res.status(400).json({ error: "A pending active exchange request is already outstanding for this partner domain." });
+  }
+
+  const senderSite = db.backlink_network_sites.find(s => s.id === senderSiteId);
+  const receiverSite = db.backlink_network_sites.find(s => s.id === receiverSiteId);
+
+  if (!senderSite || !receiverSite) {
+    return res.status(404).json({ error: "Site nodes not found in database registry." });
+  }
+
+  const newRequest: BacklinkRequest = {
+    id: `breq-${crypto.randomUUID()}`,
+    sender_site_id: senderSiteId,
+    receiver_site_id: receiverSiteId,
+    sender_user_id: senderUserId || "anonymous",
+    receiver_user_id: receiverSite.user_id,
+    target_url: targetUrl.trim(),
+    anchor_text: anchorText.trim(),
+    placement_suggestion: placementSuggestion || `https://${receiverSite.domain}/blog`,
+    context_snippet: contextSnippet || `Check out this expert resource: ${anchorText}`,
+    status: "pending",
+    created_at: new Date().toISOString()
+  };
+
+  db.backlink_requests.push(newRequest);
+
+  // Write notification logging
+  db.backlink_health_logs.push({
+    id: `hl-log-${crypto.randomUUID()}`,
+    site_id: senderSiteId,
+    log_type: "link_scanned",
+    severity: "info",
+    message: `Sent backlink request to "${receiverSite.domain}" with anchor text: "${anchorText}".`,
+    timestamp: new Date().toISOString()
+  });
+
+  writeBacklinkDb(db);
+
+  return res.json({
+    success: true,
+    message: "Backlink exchange request dispatched!",
+    request: newRequest
+  });
+});
+
+// 4. Handle Incoming Request (Approve/Reject)
+app.post("/api/backlink/handle-request", (req, res) => {
+  const { requestId, action } = req.body; // action: "approve" | "reject" | "cancel"
+
+  if (!requestId || !action) {
+    return res.status(400).json({ error: "Missing requestId or action parameter." });
+  }
+
+  const db = readBacklinkDb();
+  const requestIndex = db.backlink_requests.findIndex(r => r.id === requestId);
+
+  if (requestIndex === -1) {
+    return res.status(404).json({ error: "Request record not found in persistence history." });
+  }
+
+  const request = db.backlink_requests[requestIndex];
+
+  if (action === "approve") {
+    request.status = "approved";
+    
+    // Create an actual reciprocal dynamic exchange record
+    const sender = db.backlink_network_sites.find(s => s.id === request.sender_site_id);
+    const receiver = db.backlink_network_sites.find(s => s.id === request.receiver_site_id);
+
+    const newExchange: BacklinkExchange = {
+      id: `bex-${crypto.randomUUID()}`,
+      request_id: requestId,
+      sender_site_id: request.sender_site_id,
+      receiver_site_id: request.receiver_site_id,
+      domain_from: receiver?.domain || "Host",
+      domain_to: sender?.domain || "Guest",
+      backlink_url: request.placement_suggestion,
+      target_url: request.target_url,
+      anchor_text: request.anchor_text,
+      exchange_status: "live", // Instant auto-placement for interactive sandbox feel
+      verification_status: "verified",
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+
+    db.backlink_exchanges.push(newExchange);
+
+    // Record health logs for both sites
+    db.backlink_health_logs.push(
+      {
+        id: `hl-log-${crypto.randomUUID()}`,
+        site_id: request.receiver_site_id,
+        log_type: "link_restored",
+        severity: "success",
+        message: `Accepted request. Backlink placed on ${newExchange.domain_from} pointing to ${newExchange.domain_to}.`,
+        timestamp: new Date().toISOString()
+      },
+      {
+        id: `hl-log-${crypto.randomUUID()}`,
+        site_id: request.sender_site_id,
+        log_type: "authority_growth",
+        severity: "success",
+        message: `Your exchange request to ${newExchange.domain_from} was approved! Authority Link is active and pass juice.`,
+        timestamp: new Date().toISOString()
+      }
+    );
+
+    // Increment sender's authority slightly (authority reward)
+    if (sender) {
+      sender.authority_score = Math.min(99, sender.authority_score + 2);
+    }
+  } else if (action === "reject") {
+    request.status = "rejected";
+    db.backlink_health_logs.push({
+      id: `hl-log-${crypto.randomUUID()}`,
+      site_id: request.sender_site_id,
+      log_type: "spam_alert",
+      severity: "warn",
+      message: `Your backlink exchange request was declined by the webmaster of the host site.`,
+      timestamp: new Date().toISOString()
+    });
+  } else {
+    request.status = "cancelled";
+  }
+
+  writeBacklinkDb(db);
+
+  return res.json({
+    success: true,
+    message: `Request successfully ${action}ed!`,
+    request
+  });
+});
+
+// 5. Track/Trigger Crawler Verification
+app.post("/api/backlink/verify-link", (req, res) => {
+  const { exchangeId } = req.body;
+
+  if (!exchangeId) {
+    return res.status(400).json({ error: "Missing required exchangeId parameter." });
+  }
+
+  const db = readBacklinkDb();
+  const exchangeIndex = db.backlink_exchanges.findIndex(e => e.id === exchangeId);
+
+  if (exchangeIndex === -1) {
+    return res.status(404).json({ error: "Backlink exchange contract not found." });
+  }
+
+  const exchange = db.backlink_exchanges[exchangeIndex];
+  
+  // Choose random edge cases on tracking click to simulate deep, real monitoring:
+  // e.g. Sometimes link is found, sometimes mismatched anchor, sometimes broken target.
+  // If the user didn't write test terms, default to perfect success.
+  const checkOutcome = simulateVerifyBacklink(exchange);
+
+  exchange.exchange_status = checkOutcome.success ? "live" : "broken";
+  exchange.verification_status = checkOutcome.status;
+  exchange.updated_at = new Date().toISOString();
+
+  // Log verification scan transaction
+  const newVerification: BacklinkVerification = {
+    id: `bver-${crypto.randomUUID()}`,
+    exchange_id: exchangeId,
+    verified_at: new Date().toISOString(),
+    html_status: checkOutcome.success ? 200 : 404,
+    link_found: checkOutcome.success,
+    exact_anchor_matches: checkOutcome.status !== "mismatched_anchor",
+    remarks: checkOutcome.remarks
+  };
+
+  db.backlink_verifications.push(newVerification);
+
+  // Health notification logging
+  db.backlink_health_logs.push({
+    id: `hl-log-${crypto.randomUUID()}`,
+    site_id: exchange.sender_site_id,
+    log_type: checkOutcome.success ? "link_scanned" : "link_lost",
+    severity: checkOutcome.success ? "success" : "error",
+    message: `Crawler audited ${exchange.domain_from} link verification. Result: ${checkOutcome.remarks}`,
+    timestamp: new Date().toISOString()
+  });
+
+  writeBacklinkDb(db);
+
+  return res.json({
+    success: true,
+    message: "Deep link validation completed by crawl robot!",
+    verification: newVerification,
+    exchange
+  });
+});
+
+// 6. Report site for low-quality / duplicate link-farm behaviors
+app.post("/api/backlink/report-abuse", (req, res) => {
+  const { siteId, reason = "Spam behavior" } = req.body;
+
+  if (!siteId) {
+    return res.status(400).json({ error: "Missing siteId to flag." });
+  }
+
+  const db = readBacklinkDb();
+  const site = db.backlink_network_sites.find(s => s.id === siteId);
+
+  if (!site) {
+    return res.status(404).json({ error: "Target abuse node not found." });
+  }
+
+  // Double down on spam scoring limiters
+  site.spam_score = Math.min(100, site.spam_score + 15);
+  if (site.spam_score > 40) {
+    site.backlink_profile_health = "Poor";
+  } else if (site.spam_score > 20) {
+    site.backlink_profile_health = "Needs Attention";
+  }
+
+  db.backlink_health_logs.push({
+    id: `hl-log-${crypto.randomUUID()}`,
+    site_id: "all",
+    log_type: "anti_spam_shield",
+    severity: "warn",
+    message: `Anti-spam firewall flagged high density activity on host "${site.domain}". Spam metric updated to ${site.spam_score}%.`,
+    timestamp: new Date().toISOString()
+  });
+
+  writeBacklinkDb(db);
+
+  return res.json({
+    success: true,
+    message: "Report logged! The network firewall has flagged this host and downgraded search score metrics.",
+    site
+  });
+});
+
+// 7. Get AI placement suggestions co-pilot
+app.get("/api/backlink/ai-recommend", (req, res) => {
+  const { senderDomain, receiverDomain, niche } = req.query;
+
+  if (!senderDomain || !receiverDomain || !niche) {
+    return res.status(400).json({ error: "Domain properties and niche inputs are mandatory." });
+  }
+
+  const recommendation = generateAiContextRecommendation(
+    senderDomain as string,
+    receiverDomain as string,
+    niche as string
+  );
+
+  return res.json({
+    success: true,
+    recommendation
+  });
+});
+
+
+// ==========================================
+// 📈 DOMAIN AUTHORITY & DOMAIN RATING (DA/DR) INTELLIGENCE APIS
+// ==========================================
+
+// 1. Get full Authority Dashboard info
+app.get("/api/authority/dashboard", (req, res) => {
+  const { projectId, userId = "anonymous", activePlan = "free" } = req.query;
+
+  if (!projectId) {
+    return res.status(400).json({ error: "Missing required projectId query." });
+  }
+
+  const db = readAuthorityDb();
+
+  // Find all historical snapshots for this specific project
+  const projectSnapshots = db.authority_snapshots
+    .filter(s => s.project_id === projectId)
+    .sort((a, b) => new Date(a.snapshot_date).getTime() - new Date(b.snapshot_date).getTime());
+
+  // Find competitor registry list
+  const competitors = db.competitor_authority_tracking.filter(c => c.project_id === projectId);
+
+  // Active alerts
+  const alerts = db.authority_alerts
+    .filter(a => a.project_id === projectId)
+    .sort((a, b) => new Date(b.triggered_at).getTime() - new Date(a.triggered_at).getTime());
+
+  // Reports generated
+  const reports = db.authority_reports.filter(r => r.project_id === projectId);
+
+  // Default parameters if no snapshots exist (seed a starting base snapshot)
+  if (projectSnapshots.length === 0) {
+    const baseSnapshot: AuthoritySnapshot = {
+      id: `snap-${crypto.randomUUID()}`,
+      user_id: userId as string,
+      project_id: projectId as string,
+      domain: "yoursite.com",
+      current_dr: 28,
+      current_da: 24,
+      referring_domains: 45,
+      backlinks: 180,
+      authority_score: 26,
+      growth_percentage: 0,
+      velocity: 0,
+      trust_flow: 18,
+      citation_flow: 22,
+      snapshot_date: new Date().toISOString(),
+      created_at: new Date().toISOString()
+    };
+    db.authority_snapshots.push(baseSnapshot);
+    writeAuthorityDb(db);
+    projectSnapshots.push(baseSnapshot);
+  }
+
+  const latestSnapshot = projectSnapshots[projectSnapshots.length - 1];
+
+  // Integrate live backlinks count from Backlink Database for correlation
+  let linkedExchangesCount = 0;
+  try {
+    const backlinkDb = JSON.parse(fs.readFileSync(path.join(process.cwd(), "backlink_network_db.json"), "utf8"));
+    const activeSite = backlinkDb.backlink_network_sites?.find((s: any) => s.website_id === projectId && s.is_active);
+    if (activeSite) {
+      const activeContracts = backlinkDb.backlink_exchanges?.filter(
+        (e: any) => (e.sender_site_id === activeSite.id || e.receiver_site_id === activeSite.id) && e.exchange_status === "live"
+      ) || [];
+      linkedExchangesCount = activeContracts.length;
+    }
+  } catch (e) {
+    // Falls back gracefully if file not loaded
+  }
+
+  // Auto-calculate dynamic gains if there are multiple snapshots
+  let previousSnapshot = latestSnapshot;
+  if (projectSnapshots.length > 1) {
+    previousSnapshot = projectSnapshots[projectSnapshots.length - 2];
+  }
+
+  const drGrowth = latestSnapshot.current_dr - previousSnapshot.current_dr;
+  const daGrowth = latestSnapshot.current_da - previousSnapshot.current_da;
+  const backlinksGrowth = latestSnapshot.backlinks - previousSnapshot.backlinks;
+
+  // Compute composite score & generate AI recommendations
+  const seoStrengthScore = computeCompositeSEOStrength(
+    latestSnapshot.current_da,
+    latestSnapshot.current_dr,
+    latestSnapshot.trust_flow
+  );
+
+  const aiInsights = generateAiInsights(
+    latestSnapshot.current_da,
+    latestSnapshot.current_dr,
+    latestSnapshot.backlinks,
+    latestSnapshot.referring_domains,
+    latestSnapshot.velocity
+  );
+
+  return res.json({
+    success: true,
+    latestSnapshot,
+    snapshots: projectSnapshots,
+    competitors,
+    alerts,
+    reports,
+    gains: {
+      drGrowth,
+      daGrowth,
+      backlinksGrowth,
+      seoStrengthScore,
+      linkedExchangesCount
+    },
+    aiInsights,
+    demoLimits: activePlan === "free"
+  });
+});
+
+// 2. Track/Capture fresh Domain Rating snapshot
+app.post("/api/authority/track-domain", (req, res) => {
+  const { projectId, domain, userId = "anonymous", activePlan = "free" } = req.body;
+
+  if (!projectId || !domain) {
+    return res.status(400).json({ error: "Required project parameter is missing." });
+  }
+
+  const db = readAuthorityDb();
+
+  // Find existing project snapshots to compute drift
+  const list = db.authority_snapshots
+    .filter(s => s.project_id === projectId)
+    .sort((a, b) => new Date(a.snapshot_date).getTime() - new Date(b.snapshot_date).getTime());
+
+  let baseDr = 30;
+  let baseDa = 25;
+  let baseRD = 60;
+  let baseBL = 220;
+  let baseTF = 20;
+  let baseCF = 25;
+
+  if (list.length > 0) {
+    const last = list[list.length - 1];
+    baseDr = last.current_dr;
+    baseDa = last.current_da;
+    baseRD = last.referring_domains;
+    baseBL = last.backlinks;
+    baseTF = last.trust_flow;
+    baseCF = last.citation_flow;
+  }
+
+  // Connect & Correlate with Backlink Network databases
+  let netGrowthFactor = 0;
+  try {
+    const backlinkDb = JSON.parse(fs.readFileSync(path.join(process.cwd(), "backlink_network_db.json"), "utf8"));
+    const activeSite = backlinkDb.backlink_network_sites?.find((s: any) => s.website_id === projectId && s.is_active);
+    if (activeSite) {
+      const liveLinks = backlinkDb.backlink_exchanges?.filter(
+        (e: any) => (e.sender_site_id === activeSite.id || e.receiver_site_id === activeSite.id) && e.exchange_status === "live"
+      ) || [];
+      netGrowthFactor = liveLinks.length;
+    }
+  } catch (err) {
+    // Safely bypass
+  }
+
+  // Billing check: Free tier retention and velocity is slightly throttled
+  const limitMaxHistory = activePlan === "free" ? 10 : 150;
+  const projectHistoryCount = db.authority_snapshots.filter(s => s.project_id === projectId).length;
+
+  if (activePlan === "free" && projectHistoryCount >= limitMaxHistory) {
+    // Delete oldest snapshot to respect historical storage limit cap for Free users
+    const firstMatchingIndex = db.authority_snapshots.findIndex(s => s.project_id === projectId);
+    if (firstMatchingIndex !== -1) {
+      db.authority_snapshots.splice(firstMatchingIndex, 1);
+    }
+  }
+
+  // Calculate simulated authority growth based on backend triggers (gains always positive or minor volatility)
+  const drIncrement = Math.floor(Math.random() * 2) + (netGrowthFactor > 0 ? 1 : 0);
+  const daIncrement = Math.floor(Math.random() * 2) + (netGrowthFactor > 1 ? 1 : 0);
+  const rdIncrement = Math.floor(Math.random() * 5) + 2 + (netGrowthFactor * 3);
+  const blIncrement = Math.floor(Math.random() * 25) + 10 + (netGrowthFactor * 12);
+
+  const newDr = Math.min(99, baseDr + drIncrement);
+  const newDa = Math.min(99, baseDa + daIncrement);
+  const newRD = baseRD + rdIncrement;
+  const newBL = baseBL + blIncrement;
+  const newTF = Math.min(95, baseTF + (drIncrement > 0 ? 1 : 0));
+  const newCF = Math.min(95, baseCF + (daIncrement > 0 ? 1 : 0));
+
+  const compositeScore = computeCompositeSEOStrength(newDa, newDr, newTF);
+  const growthPercentVal = list.length > 0 ? parseFloat((((newDr - list[0].current_dr) / list[0].current_dr) * 100).toFixed(1)) : 0;
+  
+  const formattedDomain = domain.trim().toLowerCase().replace(/^(https?:\/\/)?(www\.)?/, "");
+
+  const newSnapshot: AuthoritySnapshot = {
+    id: `snap-${crypto.randomUUID()}`,
+    user_id: userId,
+    project_id: projectId,
+    domain: formattedDomain,
+    current_dr: newDr,
+    current_da: newDa,
+    referring_domains: newRD,
+    backlinks: newBL,
+    authority_score: compositeScore,
+    growth_percentage: isNaN(growthPercentVal) ? 0 : growthPercentVal,
+    velocity: parseFloat((drIncrement + daIncrement / 2).toFixed(2)),
+    trust_flow: newTF,
+    citation_flow: newCF,
+    snapshot_date: new Date().toISOString(),
+    created_at: new Date().toISOString()
+  };
+
+  db.authority_snapshots.push(newSnapshot);
+
+  // AUTOMATED INCIDENT MONITOR & ALERTS ALGORITHMS
+  // A. Trigger Milestone alert
+  const oldComposite = list.length > 0 ? list[list.length - 1].authority_score : 20;
+  if (Math.floor(compositeScore / 10) > Math.floor(oldComposite / 10)) {
+    db.authority_alerts.push({
+      id: `aa-al-${crypto.randomUUID()}`,
+      project_id: projectId,
+      alert_type: "milestone_achieved",
+      severity: "success",
+      title: "New Authority Milestone Achievement!",
+      message: `Dynamic scan complete. ${formattedDomain} climbed passed Composite Score marker of ${Math.floor(compositeScore / 10) * 10}+ points!`,
+      triggered_at: new Date().toISOString(),
+      is_read: false
+    });
+  }
+
+  // B. Challenge Competitor scores to fire "Competitor Overtake Alert"
+  const competitors = db.competitor_authority_tracking.filter(c => c.project_id === projectId);
+  competitors.forEach(comp => {
+    const oldGap = comp.authority_gap;
+    // Recalculate new gap
+    const newGap = comp.current_dr - newDr;
+    comp.authority_gap = newGap;
+
+    // Trigger alert if gap shifted from positive (competitor ahead of us) to negative (competitor behind us)
+    if (oldGap >= 0 && newGap < 0) {
+      db.authority_alerts.push({
+        id: `aa-al-${crypto.randomUUID()}`,
+        project_id: projectId,
+        alert_type: "competitor_overtake",
+        severity: "success",
+        title: `Competitor Overtaken!`,
+        message: `Great achievements! Your backlink velocity pushed your rating ahead of ${comp.domain} (DR ${comp.current_dr}).`,
+        triggered_at: new Date().toISOString(),
+        is_read: false
+      });
+    }
+  });
+
+  // C. Drastic increases triggers standard Alerts
+  if (drIncrement > 0) {
+    db.authority_alerts.push({
+      id: `aa-al-${crypto.randomUUID()}`,
+      project_id: projectId,
+      alert_type: "dr_increase",
+      severity: "success",
+      title: "Domain Rating Improved",
+      message: `Your manual crawl index reported an increase of DR by +${drIncrement} points. Real SEO trust is active.`,
+      triggered_at: new Date().toISOString(),
+      is_read: false
+    });
+  }
+
+  writeAuthorityDb(db);
+
+  return res.json({
+    success: true,
+    message: "Domain checked successfully!",
+    snapshot: newSnapshot
+  });
+});
+
+// 3. Register a competitor
+app.post("/api/authority/add-competitor", (req, res) => {
+  const { projectId, domain, competitorName, activePlan = "free" } = req.body;
+
+  if (!projectId || !domain || !competitorName) {
+    return res.status(400).json({ error: "Missing mandatory competitor parameters." });
+  }
+
+  const db = readAuthorityDb();
+
+  // Premium Limit
+  const competitorLimit = activePlan === "free" ? 1 : 5;
+  const currentCount = db.competitor_authority_tracking.filter(c => c.project_id === projectId).length;
+
+  if (currentCount >= competitorLimit) {
+    return res.status(403).json({
+      error: `Upgrade to Premium to unlock unmetered competitor tracking slots. Current plan is limited to ${competitorLimit} competitor domain.`
+    });
+  }
+
+  const cleanDomain = domain.trim().toLowerCase().replace(/^(https?:\/\/)?(www\.)?/, "");
+
+  // Generate somewhat aligned competitor scores to ensure reasonable competitiveness
+  const projectList = db.authority_snapshots.filter(s => s.project_id === projectId);
+  const targetDr = projectList.length > 0 ? projectList[projectList.length - 1].current_dr : 35;
+  
+  // Create randomized competitors relative to the main project
+  const randomizedDr = Math.min(95, targetDr + Math.floor(Math.random() * 12) - 5);
+  const randomizedDa = Math.max(10, randomizedDr - Math.floor(Math.random() * 5));
+
+  const newCompetitor: AuthorityCompetitor = {
+    id: `comp-${crypto.randomUUID()}`,
+    project_id: projectId,
+    domain: cleanDomain,
+    competitor_name: competitorName.trim(),
+    current_dr: randomizedDr,
+    current_da: randomizedDa,
+    referring_domains: Math.floor(randomizedDr * 5) + Math.floor(Math.random() * 40),
+    backlinks: Math.floor(randomizedDr * 20) + Math.floor(Math.random() * 300),
+    authority_gap: randomizedDr - targetDr,
+    is_verified: true,
+    created_at: new Date().toISOString()
+  };
+
+  db.competitor_authority_tracking.push(newCompetitor);
+  writeAuthorityDb(db);
+
+  return res.json({
+    success: true,
+    message: "Competitor tracker added successfully!",
+    competitor: newCompetitor
+  });
+});
+
+// 4. Delete competitor tracking node
+app.post("/api/authority/delete-competitor", (req, res) => {
+  const { competitorId } = req.body;
+
+  if (!competitorId) {
+    return res.status(400).json({ error: "Missing competitor identifier parameter." });
+  }
+
+  const db = readAuthorityDb();
+  const index = db.competitor_authority_tracking.findIndex(c => c.id === competitorId);
+
+  if (index === -1) {
+    return res.status(404).json({ error: "Competitor record was not registered." });
+  }
+
+  db.competitor_authority_tracking.splice(index, 1);
+  writeAuthorityDb(db);
+
+  return res.json({
+    success: true,
+    message: "Competitor removed from radar tracking."
+  });
+});
+
+// 5. Generate Weekly / Monthly executive summaries
+app.post("/api/authority/generate-report", (req, res) => {
+  const { projectId, reportType } = req.body; // "weekly" | "monthly"
+
+  if (!projectId || !reportType) {
+    return res.status(400).json({ error: "Project and type parameters are mandatory." });
+  }
+
+  const db = readAuthorityDb();
+  const list = db.authority_snapshots
+    .filter(s => s.project_id === projectId)
+    .sort((a, b) => new Date(a.snapshot_date).getTime() - new Date(b.snapshot_date).getTime());
+
+  if (list.length === 0) {
+    return res.status(400).json({ error: "You must capture at least one domain snapshot before synthesizing data." });
+  }
+
+  const latest = list[list.length - 1];
+  const start = list[0];
+
+  const daDiff = latest.current_da - start.current_da;
+  const drDiff = latest.current_dr - start.current_dr;
+  const blDiff = latest.backlinks - start.backlinks;
+  const rdDiff = latest.referring_domains - start.referring_domains;
+
+  const typeLabel = reportType === "weekly" ? "Weekly Authority Diagnosis" : "Monthly Authority Diagnosis";
+  const labelText = `${typeLabel} (${new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric' })})`;
+
+  const newReport: AuthorityReport = {
+    id: `rep-${crypto.randomUUID()}`,
+    project_id: projectId,
+    report_type: reportType,
+    duration_label: labelText,
+    start_da: start.current_da,
+    end_da: latest.current_da,
+    start_dr: start.current_dr,
+    end_dr: latest.current_dr,
+    backlink_gains: blDiff,
+    referring_domains_gains: rdDiff,
+    summary: `This compiled report confirms highly favorable authority velocity trends. Domain Rating expanded (+${drDiff} points) with an increase of ${blDiff} backlinks indexing successfully. Composite SEO trust has strengthened, reducing structural authority gaps against direct competitors. Immediate action guidelines are focused on maintaining structured thematic indexing pipelines.`,
+    created_at: new Date().toISOString()
+  };
+
+  db.authority_reports.push(newReport);
+  writeAuthorityDb(db);
+
+  return res.json({
+    success: true,
+    message: "Authority digest report compiled successfully!",
+    report: newReport
+  });
+});
+
+// 6. Dismiss / Read alerts
+app.post("/api/authority/dismiss-alert", (req, res) => {
+  const { projectId, alertId } = req.body;
+
+  const db = readAuthorityDb();
+  if (alertId) {
+    db.authority_alerts = db.authority_alerts.map(a => {
+      if (a.id === alertId) return { ...a, is_read: true };
+      return a;
+    });
+  } else if (projectId) {
+    db.authority_alerts = db.authority_alerts.map(a => {
+      if (a.project_id === projectId) return { ...a, is_read: true };
+      return a;
+    });
+  }
+
+  writeAuthorityDb(db);
+  return res.json({ success: true, message: "Alerts successfully marked as reviewed." });
 });
 
 

@@ -31,6 +31,7 @@ import {
   Edit3,
   CreditCard,
   Link2,
+  Share2,
   Radio
 } from 'lucide-react';
 
@@ -75,6 +76,7 @@ import { NotionCmsIntegration } from './components/NotionCmsIntegration';
 import { WordpressCmsIntegration } from './components/WordpressCmsIntegration';
 import { NextjsCmsIntegration } from './components/NextjsCmsIntegration';
 import { IntegrationsPage } from './components/IntegrationsPage';
+import { BacklinkNetworkDashboard } from './components/BacklinkNetworkDashboard';
 
 
 // Firebase Authentication and Relational Sync Client Integrations
@@ -108,7 +110,7 @@ export default function App() {
 
   // Navigation & Core States
   const [viewMode, setViewMode] = useState<'landing' | 'app' | 'pricing' | 'integrations'>('landing');
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'projects' | 'keywords' | 'planner' | 'editor' | 'crawler' | 'settings' | 'brand'>('brand');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'projects' | 'keywords' | 'planner' | 'editor' | 'crawler' | 'settings' | 'brand' | 'backlinks'>('brand');
   const [keywordsSubTab, setKeywordsSubTab] = useState<'explore' | 'tracker' | 'ai-discovery'>('explore');
   
   // AI Keyword Discovery Sync States
@@ -1915,6 +1917,7 @@ export default function App() {
               { id: 'planner', label: 'Content Planner', icon: FileText },
               { id: 'editor', label: 'SEO Code Writer', icon: Sparkles },
               { id: 'linker', label: 'Semantic Linker', icon: Link2 },
+              { id: 'backlinks', label: 'Backlink Network', icon: Share2 },
               { id: 'crawler', label: 'Simulated SERP Logs', icon: Terminal },
               { id: 'settings', label: 'CMS Connected Hub', icon: Settings },
               { id: 'brand', label: 'Brand & Assets', icon: BookOpen }
@@ -5222,6 +5225,33 @@ export default function App() {
                 </div>
               </div>
 
+            </div>
+          )}
+
+          {/* ========================================= */}
+          {/* TAB: BACKLINK PRIVATE EXCHANGE CIRCLE */}
+          {/* ========================================= */}
+          {activeTab === 'backlinks' && (
+            <div className="space-y-6">
+              <BacklinkNetworkDashboard
+                projectId={selectedProjectId}
+                theme={theme}
+                activePlan={activePlan}
+                onLogAdded={(newLog) => {
+                  const mappedLog = {
+                    id: newLog.id,
+                    timestamp: newLog.timestamp,
+                    type: newLog.type,
+                    message: newLog.message,
+                    module: "BACKLINK_CHECK"
+                  };
+                  if (currentUser) {
+                    fsSaveLog(mappedLog, selectedProjectId, currentUser.uid);
+                  } else {
+                    setLogs(prev => [mappedLog, ...prev]);
+                  }
+                }}
+              />
             </div>
           )}
 
