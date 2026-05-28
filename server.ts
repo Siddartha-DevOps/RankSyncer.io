@@ -58,6 +58,16 @@ import {
   AuthorityReport
 } from "./src/lib/seo/authorityService";
 import {
+  readDirectoryDb,
+  writeDirectoryDb,
+  generateAiDescriptionProposal,
+  simulateDirectoryVerification,
+  DirectoryNode,
+  DirectorySubmission,
+  DirectoryStatusLog,
+  AutoFillProfile
+} from "./src/lib/seo/directoryService";
+import {
   readWordpressComDb,
   writeWordpressComDb,
   encryptWordpressToken,
@@ -4070,6 +4080,406 @@ app.post("/api/authority/dismiss-alert", (req, res) => {
 
   writeAuthorityDb(db);
   return res.json({ success: true, message: "Alerts successfully marked as reviewed." });
+});
+
+
+// ==========================================
+// 📁 DIRECTORY SUBMISSION SERVICE APIS
+// ==========================================
+
+// 1. Fetch directories lists, active project submissions, status logs & AI autofill profile
+app.get("/api/directory/dashboard-data", (req, res) => {
+  const { projectId, activePlan = "free" } = req.query;
+
+  if (!projectId) {
+    return res.status(400).json({ error: "projectId query is required." });
+  }
+
+  const db = readDirectoryDb();
+
+  // Find or Seed autofill profile for this project
+  let profile = db.autofill_profiles.find(p => p.project_id === projectId);
+  if (!profile) {
+    profile = {
+      id: `ap-${crypto.randomUUID()}`,
+      project_id: projectId as string,
+      company_name: "My SaaS Launch",
+      website_url: "https://mysaalauch.com",
+      description_short: "A premier web development template for micro-teams.",
+      description_long: "Our platform helps early startups set up robust web infrastructures under 10 minutes. Fully integrated with secure CMS interfaces, live SERP indexes, and automatic cloud deployments.",
+      category: "SaaS",
+      founder_name: "Jane Doe",
+      logo_url: "https://mysaalauch.com/favicon.png",
+      contact_email: "support@mysaalauch.com",
+      twitter_url: "https://twitter.com/mysaalauch",
+      linkedin_url: "https://linkedin.com/company/mysaalauch",
+      keywords_array: ["saas", "react", "tailwindcss", "developer-tools"]
+    };
+    db.autofill_profiles.push(profile);
+    writeDirectoryDb(db);
+  }
+
+  // Filter project-specific submissions
+  const submissions = db.directory_submissions.filter(s => s.project_id === projectId);
+
+  // Filter logs
+  const logs = db.directory_status_logs
+    .filter(l => l.project_id === projectId)
+    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+  // Compute live relevance scores matching directories list to the project top-niche category
+  const activeCategory = profile.category || "SaaS";
+
+  const evaluatedDirectories = db.directories.map(dir => {
+    let relevanceScore = 65;
+    if (dir.category.toLowerCase() === activeCategory.toLowerCase()) {
+      relevanceScore = 95;
+    } else if (
+      (activeCategory.toLowerCase() === "saas" && dir.category === "AI Tools") ||
+      (activeCategory.toLowerCase() === "ai tools" && dir.category === "SaaS") ||
+      dir.category === "Startup"
+    ) {
+      relevanceScore = 85;
+    }
+    return {
+      ...dir,
+      niche_relevance: relevanceScore
+    };
+  });
+
+  // Calculate detailed performance analytics
+  const submittedCount = submissions.length;
+  const approvedCount = submissions.filter(s => s.approval_status === "approved").length;
+  const pendingCount = submissions.filter(s => s.submission_status === "submitted" && s.approval_status === "under_review").length;
+  const rejectedCount = submissions.filter(s => s.approval_status === "rejected").length;
+  const liveBacklinksCount = submissions.filter(s => s.backlink_status === "live").length;
+
+  const totalPossibleCount = db.directories.length;
+  const successRate = submittedCount > 0 ? Math.floor((approvedCount / submittedCount) * 100) : 0;
+
+  return res.json({
+    success: true,
+    directories: evaluatedDirectories,
+    submissions,
+    autofillProfile: profile,
+    statusLogs: logs,
+    analytics: {
+      submittedCount,
+      approvedCount,
+      pendingCount,
+      rejectedCount,
+      liveBacklinksCount,
+      totalPossibleCount,
+      successRate
+    }
+  });
+});
+
+// 2. Save Auto-Fill profile and prompt AI-generated content summaries
+app.post("/api/directory/save-profile", (req, res) => {
+  const { projectId, profileData, generateWithAi = false } = req.body;
+
+  if (!projectId || !profileData) {
+    return res.status(400).json({ error: "Missing required profile payload." });
+  }
+
+  const db = readDirectoryDb();
+  let index = db.autofill_profiles.findIndex(p => p.project_id === projectId);
+
+  let updatedProfile: AutoFillProfile;
+
+  if (generateWithAi) {
+    const aiProposal = generateAiDescriptionProposal(
+      profileData.company_name,
+      profileData.category || "AI Tools & SaaS",
+      profileData.keywords_array?.join(", ") || ""
+    );
+    updatedProfile = {
+      ...profileData,
+      id: index !== -1 ? db.autofill_profiles[index].id : `ap-${crypto.randomUUID()}`,
+      project_id: projectId,
+      description_short: aiProposal.shortDesc,
+      description_long: aiProposal.longDesc
+    };
+  } else {
+    updatedProfile = {
+      ...profileData,
+      id: index !== -1 ? db.autofill_profiles[index].id : `ap-${crypto.randomUUID()}`,
+      project_id: projectId
+    };
+  }
+
+  if (index !== -1) {
+    db.autofill_profiles[index] = updatedProfile;
+  } else {
+    db.autofill_profiles.push(updatedProfile);
+  }
+
+  // Log profile configuration tuning updates
+  db.directory_status_logs.push({
+    id: `log-${crypto.randomUUID()}`,
+    project_id: projectId,
+    directory_name: "System Settings",
+    log_type: "submitted",
+    severity: "info",
+    message: generateWithAi 
+      ? `AI Auto-Fill SEO Pitch successfully generated for company "${updatedProfile.company_name}".`
+      : `Directory submission profile updated for "${updatedProfile.company_name}".`,
+    timestamp: new Date().toISOString()
+  });
+
+  writeDirectoryDb(db);
+
+  return res.json({
+    success: true,
+    message: "Auto-fill optimization parameters configured!",
+    profile: updatedProfile
+  });
+});
+
+// 3. Automated Submission Pipeline for a single Web Directory
+app.post("/api/directory/submit-single", (req, res) => {
+  const { projectId, directoryId, userId = "anonymous", activePlan = "free" } = req.body;
+
+  if (!projectId || !directoryId) {
+    return res.status(400).json({ error: "Required fields are missing." });
+  }
+
+  const db = readDirectoryDb();
+
+  // Find Directory Definition
+  const directory = db.directories.find(d => d.id === directoryId);
+  if (!directory) {
+    return res.status(404).json({ error: "Target directory not found." });
+  }
+
+  // Active Plan premium guard check
+  if (directory.is_premium_only && activePlan === "free") {
+    return res.status(403).json({
+      error: `"${directory.name}" is restricted to RankSyncer Premium members. Please upgrade your tier package to access premium directories.`
+    });
+  }
+
+  // Duplicate Check
+  const existing = db.directory_submissions.find(
+    s => s.project_id === projectId && s.directory_id === directoryId
+  );
+  if (existing && existing.submission_status !== "rejected") {
+    return res.status(400).json({ error: "This project has already initiated submission to this index." });
+  }
+
+  // Get project profile
+  const profile = db.autofill_profiles.find(p => p.project_id === projectId);
+  
+  // Simulated submission steps
+  const submissionRecord: DirectorySubmission = {
+    id: `sub-${crypto.randomUUID()}`,
+    user_id: userId,
+    project_id: projectId,
+    directory_id: directoryId,
+    directory_name: directory.name,
+    submission_status: "submitted",
+    approval_status: "under_review",
+    backlink_status: "not_detected",
+    authority_score: directory.authority_score,
+    submitted_at: new Date().toISOString(),
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  };
+
+  // Immediate Verification Audit simulator loop
+  const auditResult = simulateDirectoryVerification(submissionRecord);
+  submissionRecord.approval_status = auditResult.approval_status;
+  submissionRecord.backlink_status = auditResult.backlink_status;
+  if (auditResult.listing_url) {
+    submissionRecord.listing_url = auditResult.listing_url;
+  }
+
+  if (existing) {
+    const editIdx = db.directory_submissions.findIndex(s => s.id === existing.id);
+    db.directory_submissions[editIdx] = submissionRecord;
+  } else {
+    db.directory_submissions.push(submissionRecord);
+  }
+
+  // Write Action Signals Logs
+  db.directory_status_logs.push({
+    id: `log-${crypto.randomUUID()}`,
+    project_id: projectId,
+    directory_name: directory.name,
+    log_type: submissionRecord.approval_status === "approved" ? "approved" : "submitted",
+    severity: submissionRecord.approval_status === "approved" ? "success" : "info",
+    message: submissionRecord.approval_status === "approved"
+      ? `Site approved on ${directory.name}! Active backlink discovered by audit crawler: ${auditResult.remarks}`
+      : `Submission completed to ${directory.name}. Waiting for manual listing verification review boards.`,
+    timestamp: new Date().toISOString()
+  });
+
+  writeDirectoryDb(db);
+
+  return res.json({
+    success: true,
+    message: `Submitted successfully to ${directory.name}!`,
+    submission: submissionRecord
+  });
+});
+
+// 4. One-Click Bulk Submissions Campaign
+app.post("/api/directory/submit-bulk", (req, res) => {
+  const { projectId, category, userId = "anonymous", activePlan = "free" } = req.body;
+
+  if (!projectId) {
+    return res.status(400).json({ error: "projectId parameter is required." });
+  }
+
+  const db = readDirectoryDb();
+
+  // Premium Limit
+  if (activePlan === "free") {
+    return res.status(403).json({
+      error: "Bulk Submission Campaigning is a premium SEO service. Upgrade to premium to register unlimited index nodes with one click!"
+    });
+  }
+
+  // Filter target directories
+  const targetDirectories = db.directories.filter(
+    d => !category || d.category === category
+  );
+
+  let successCount = 0;
+  const processedSubmissions: DirectorySubmission[] = [];
+
+  targetDirectories.forEach(dir => {
+    // Check if already registered
+    const exists = db.directory_submissions.some(
+      s => s.project_id === projectId && s.directory_id === dir.id && s.approval_status === "approved"
+    );
+
+    if (!exists) {
+      const submissionRecord: DirectorySubmission = {
+        id: `sub-${crypto.randomUUID()}`,
+        user_id: userId,
+        project_id: projectId,
+        directory_id: dir.id,
+        directory_name: dir.name,
+        submission_status: "submitted",
+        approval_status: "under_review",
+        backlink_status: "not_detected",
+        authority_score: dir.authority_score,
+        submitted_at: new Date().toISOString(),
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+
+      const audit = simulateDirectoryVerification(submissionRecord);
+      submissionRecord.approval_status = audit.approval_status;
+      submissionRecord.backlink_status = audit.backlink_status;
+      if (audit.listing_url) {
+        submissionRecord.listing_url = audit.listing_url;
+      }
+
+      db.directory_submissions.push(submissionRecord);
+      processedSubmissions.push(submissionRecord);
+      successCount++;
+
+      // Log
+      db.directory_status_logs.push({
+        id: `log-${crypto.randomUUID()}`,
+        project_id: projectId,
+        directory_name: dir.name,
+        log_type: submissionRecord.approval_status === "approved" ? "approved" : "submitted",
+        severity: submissionRecord.approval_status === "approved" ? "success" : "info",
+        message: `[Bulk Campaign] Submission completed for ${dir.name}. Audit: ${audit.remarks}`,
+        timestamp: new Date().toISOString()
+      });
+    }
+  });
+
+  writeDirectoryDb(db);
+
+  return res.json({
+    success: true,
+    message: `${successCount} directories added to bulk submission pipeline!`,
+    processedCount: successCount,
+    submissions: processedSubmissions
+  });
+});
+
+// 5. Audit verify listing live crawl
+app.post("/api/directory/verify-listing", (req, res) => {
+  const { submissionId } = req.body;
+
+  if (!submissionId) {
+    return res.status(400).json({ error: "submissionId parameter is required." });
+  }
+
+  const db = readDirectoryDb();
+  const index = db.directory_submissions.findIndex(s => s.id === submissionId);
+
+  if (index === -1) {
+    return res.status(404).json({ error: "Submission record not discovered in catalog." });
+  }
+
+  const submission = db.directory_submissions[index];
+  const auditResult = simulateDirectoryVerification(submission);
+
+  submission.approval_status = auditResult.approval_status;
+  submission.backlink_status = auditResult.backlink_status;
+  if (auditResult.listing_url) {
+    submission.listing_url = auditResult.listing_url;
+  }
+  submission.updated_at = new Date().toISOString();
+
+  db.directory_status_logs.push({
+    id: `log-${crypto.randomUUID()}`,
+    project_id: submission.project_id,
+    directory_name: submission.directory_name,
+    log_type: auditResult.success ? "backlink_found" : "scan_failed",
+    severity: auditResult.success ? "success" : "warn",
+    message: `Manual trace crawl executed. Verification Status: ${auditResult.remarks}`,
+    timestamp: new Date().toISOString()
+  });
+
+  writeDirectoryDb(db);
+
+  return res.json({
+    success: true,
+    message: "Listing audited successfully by crawling bot",
+    submission,
+    remarks: auditResult.remarks
+  });
+});
+
+// 6. Delete or archive a listing
+app.post("/api/directory/archive-listing", (req, res) => {
+  const { submissionId } = req.body;
+
+  if (!submissionId) {
+    return res.status(400).json({ error: "Missing required submissionId." });
+  }
+
+  const db = readDirectoryDb();
+  const index = db.directory_submissions.findIndex(s => s.id === submissionId);
+
+  if (index !== -1) {
+    const sub = db.directory_submissions[index];
+    db.directory_submissions.splice(index, 1);
+    
+    db.directory_status_logs.push({
+      id: `log-${crypto.randomUUID()}`,
+      project_id: sub.project_id,
+      directory_name: sub.directory_name,
+      log_type: "rejected",
+      severity: "info",
+      message: `Archived submission tracking nodes for: ${sub.directory_name}`,
+      timestamp: new Date().toISOString()
+    });
+
+    writeDirectoryDb(db);
+    return res.json({ success: true, message: "Listing index untracked from workspace." });
+  }
+
+  return res.status(404).json({ error: "Listing tracking ref not found." });
 });
 
 

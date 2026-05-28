@@ -77,6 +77,8 @@ import { WordpressCmsIntegration } from './components/WordpressCmsIntegration';
 import { NextjsCmsIntegration } from './components/NextjsCmsIntegration';
 import { IntegrationsPage } from './components/IntegrationsPage';
 import { BacklinkNetworkDashboard } from './components/BacklinkNetworkDashboard';
+import AuthorityDashboard from './components/AuthorityDashboard';
+import DirectorySubmissionDashboard from './components/DirectorySubmissionDashboard';
 
 
 // Firebase Authentication and Relational Sync Client Integrations
@@ -110,7 +112,7 @@ export default function App() {
 
   // Navigation & Core States
   const [viewMode, setViewMode] = useState<'landing' | 'app' | 'pricing' | 'integrations'>('landing');
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'projects' | 'keywords' | 'planner' | 'editor' | 'crawler' | 'settings' | 'brand' | 'backlinks'>('brand');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'projects' | 'keywords' | 'planner' | 'editor' | 'crawler' | 'settings' | 'brand' | 'backlinks' | 'authority' | 'directory'>('brand');
   const [keywordsSubTab, setKeywordsSubTab] = useState<'explore' | 'tracker' | 'ai-discovery'>('explore');
   
   // AI Keyword Discovery Sync States
@@ -1918,6 +1920,8 @@ export default function App() {
               { id: 'editor', label: 'SEO Code Writer', icon: Sparkles },
               { id: 'linker', label: 'Semantic Linker', icon: Link2 },
               { id: 'backlinks', label: 'Backlink Network', icon: Share2 },
+              { id: 'authority', label: 'Authority Tracking', icon: TrendingUp },
+              { id: 'directory', label: 'Directory Submit', icon: Folder },
               { id: 'crawler', label: 'Simulated SERP Logs', icon: Terminal },
               { id: 'settings', label: 'CMS Connected Hub', icon: Settings },
               { id: 'brand', label: 'Brand & Assets', icon: BookOpen }
@@ -5251,6 +5255,34 @@ export default function App() {
                     setLogs(prev => [mappedLog, ...prev]);
                   }
                 }}
+              />
+            </div>
+          )}
+
+          {/* ========================================= */}
+          {/* TAB: DOMAIN AUTHORITY INTELLIGENCE OUTRANK */}
+          {/* ========================================= */}
+          {activeTab === 'authority' && (
+            <div className="space-y-6">
+              <AuthorityDashboard
+                projectId={selectedProjectId}
+                theme={theme}
+                activePlan={activePlan}
+                siteDomain={projects.find(p => p.id === selectedProjectId)?.domain || 'buycoffees.com'}
+              />
+            </div>
+          )}
+
+          {/* ========================================= */}
+          {/* TAB: DIRECTORY SUBMISSION SERVICE PIPELINE */}
+          {/* ========================================= */}
+          {activeTab === 'directory' && (
+            <div className="space-y-6">
+              <DirectorySubmissionDashboard
+                projectId={selectedProjectId}
+                theme={theme}
+                activePlan={activePlan}
+                siteDomain={projects.find(p => p.id === selectedProjectId)?.domain || 'buycoffees.com'}
               />
             </div>
           )}
