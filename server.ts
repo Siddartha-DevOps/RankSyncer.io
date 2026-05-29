@@ -91,6 +91,14 @@ import {
   SeoAuditReport,
   SeoAuditLead
 } from "./src/lib/seo/auditService";
+import {
+  readFreeToolsDb,
+  checkFreeToolRateLimit,
+  incrementFreeToolUsage,
+  saveFreeToolLead,
+  logFreeToolGeneration,
+  executeSeoToolAi,
+} from "./src/lib/seo/freeToolsService";
 
 // Initialize Stripe Client Lazily/Safely
 let stripeClient: any = null;
@@ -10104,6 +10112,137 @@ app.get("/api/seo-audit/download-report/:auditId", (req, res) => {
     res.send(printablePage);
   } catch (err) {
     res.status(500).send("Print report render process failed.");
+  }
+});
+
+
+// ==========================================
+// PUBLIC FREE SEO TOOLS ECOSYSTEM ENDPOINTS
+// ==========================================
+
+// Get Free Tools overall analytics and tool breakdowns
+app.get("/api/free-tools/analytics", (req, res) => {
+  try {
+    const db = readFreeToolsDb();
+    
+    // Calculate live averages to make the dashboard real & dynamic
+    const totalRuns = db.free_tool_generations.length + db.analytics_cached.total_runs;
+    const totalLeads = db.free_tool_leads.length + db.analytics_cached.total_leads;
+    const conversionRate = totalRuns > 0 ? parseFloat(((totalLeads / totalRuns) * 100).toFixed(1)) : 0;
+
+    // Direct merged tool counts
+    const mergedToolCounts: Record<string, number> = { ...db.analytics_cached.by_tool };
+    db.free_tool_generations.forEach(g => {
+      mergedToolCounts[g.tool_name] = (mergedToolCounts[g.tool_name] || 0) + 1;
+    });
+
+    res.json({
+      success: true,
+      analytics: {
+        total_runs: totalRuns,
+        total_leads: totalLeads,
+        conversion_rate_percentage: conversionRate,
+        by_tool: mergedToolCounts
+      },
+      recent_generations: db.free_tool_generations.slice(-8).reverse()
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: "Failed to reload Free SEO Tool analytics." });
+  }
+});
+
+// Check rate limit for a specific user ID / email
+app.get("/api/free-tools/check-limit", (req, res) => {
+  try {
+    const { userId = "anonymous", email, activePlan = "free" } = req.query;
+    const status = checkFreeToolRateLimit(
+      String(userId),
+      email ? String(email) : undefined,
+      String(activePlan)
+    );
+    res.json({ success: true, ...status });
+  } catch (err: any) {
+    res.status(500).json({ error: "Failure checking rate limit." });
+  }
+});
+
+// Run Free Tool AI prompt or mock template fallback
+app.post("/api/free-tools/generate", async (req, res) => {
+  try {
+    const {
+      toolName,
+      inputData,
+      userId = "anonymous",
+      email,
+      websiteUrl,
+      activePlan = "free"
+    } = req.body;
+
+    if (!toolName) {
+      return res.status(400).json({ error: "Missing mandatory parameter toolName." });
+    }
+
+    // 1. Guard Rate Limit
+    const limitCheck = checkFreeToolRateLimit(userId, email, activePlan);
+    if (!limitCheck.allowed) {
+      return res.status(429).json({
+        error: "Your free tier generation quota has been exhausted for today.",
+        remaining: 0,
+        max: limitCheck.max,
+        tier: limitCheck.tier,
+        ctaMessage: limitCheck.tier === "anonymous" 
+          ? "Unlock 15 more generations today by entering your email!" 
+          : "Upgrade to Premium for completely unlimited SEO generation tools."
+      });
+    }
+
+    // 2. Execute Generation
+    const output = await executeSeoToolAi(toolName, inputData);
+
+    // 3. Log Generation
+    logFreeToolGeneration(userId, toolName, inputData, output, email, websiteUrl);
+
+    // 4. Increment usage counter
+    incrementFreeToolUsage(userId, email, activePlan);
+
+    // 5. If email was passed, ensure lead registration is captured
+    if (email && email.trim().includes("@")) {
+      saveFreeToolLead(email, websiteUrl, toolName);
+    }
+
+    // 6. Return response
+    const freshLimit = checkFreeToolRateLimit(userId, email, activePlan);
+    res.json({
+      success: true,
+      output,
+      remaining: freshLimit.remaining,
+      max: freshLimit.max,
+      tier: freshLimit.tier
+    });
+  } catch (error: any) {
+    console.error(`[FREE TOOLS API RUN GEN FAILURE]:`, error);
+    res.status(500).json({ error: error.message || "Failed to generate tool response." });
+  }
+});
+
+// Capture email lead from the Free Tools funnel
+app.post("/api/free-tools/save-lead", (req, res) => {
+  try {
+    const { email, websiteUrl, toolName = "general" } = req.body;
+
+    if (!email || !email.includes("@")) {
+      return res.status(400).json({ error: "Please provide a valid email address." });
+    }
+
+    const lead = saveFreeToolLead(email, websiteUrl, toolName);
+
+    res.json({
+      success: true,
+      lead,
+      message: "Lead captured. Welcome email simulation dispatched."
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: "Failed to reserve lead credentials." });
   }
 });
 

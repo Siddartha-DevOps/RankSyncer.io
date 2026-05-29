@@ -80,6 +80,7 @@ import { BacklinkNetworkDashboard } from './components/BacklinkNetworkDashboard'
 import AuthorityDashboard from './components/AuthorityDashboard';
 import DirectorySubmissionDashboard from './components/DirectorySubmissionDashboard';
 import SeoAuditTool from './components/SeoAuditTool';
+import FreeSeoTools from './components/FreeSeoTools';
 
 
 // Firebase Authentication and Relational Sync Client Integrations
@@ -112,7 +113,7 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(true);
 
   // Navigation & Core States
-  const [viewMode, setViewMode] = useState<'landing' | 'app' | 'pricing' | 'integrations' | 'seo-audit'>('landing');
+  const [viewMode, setViewMode] = useState<'landing' | 'app' | 'pricing' | 'integrations' | 'seo-audit' | 'free-tools'>('landing');
   const [activeTab, setActiveTab] = useState<'dashboard' | 'projects' | 'keywords' | 'planner' | 'editor' | 'crawler' | 'settings' | 'brand' | 'backlinks' | 'authority' | 'directory'>('brand');
   const [keywordsSubTab, setKeywordsSubTab] = useState<'explore' | 'tracker' | 'ai-discovery'>('explore');
   
@@ -335,6 +336,8 @@ export default function App() {
     const s = new URLSearchParams(window.location.search);
     if (p.includes('seo-audit') || h === '#seo-audit' || s.get('view') === 'seo-audit') {
       setViewMode('seo-audit');
+    } else if (p.includes('tools') || h.includes('tools') || s.get('view') === 'free-tools' || s.get('view') === 'tools') {
+      setViewMode('free-tools');
     }
   }, []);
 
@@ -1694,6 +1697,7 @@ export default function App() {
         onPricingClick={() => setViewMode('pricing')}
         onIntegrationsClick={() => setViewMode('integrations')}
         onSeoAuditClick={() => setViewMode('seo-audit')}
+        onFreeToolsClick={() => setViewMode('free-tools')}
         projectsCount={projects.length}
       />
     );
@@ -1734,6 +1738,16 @@ export default function App() {
         onPricingClick={() => setViewMode('pricing')}
         onLaunchApp={() => setViewMode('app')}
         projectsCount={projects.length}
+      />
+    );
+  }
+
+  if (viewMode === 'free-tools') {
+    return (
+      <FreeSeoTools 
+        onBackToLanding={() => setViewMode('landing')}
+        onPricingClick={() => setViewMode('pricing')}
+        onLaunchApp={() => setViewMode('app')}
       />
     );
   }
