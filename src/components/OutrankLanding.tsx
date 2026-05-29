@@ -31,9 +31,10 @@ interface OutrankLandingProps {
   onIntegrationsClick?: () => void;
   onSeoAuditClick?: () => void;
   onFreeToolsClick?: () => void;
+  onToolBuilderClick?: () => void;
 }
 
-export default function OutrankLanding({ onLaunchApp, projectsCount, onPricingClick, onIntegrationsClick, onSeoAuditClick, onFreeToolsClick }: OutrankLandingProps) {
+export default function OutrankLanding({ onLaunchApp, projectsCount, onPricingClick, onIntegrationsClick, onSeoAuditClick, onFreeToolsClick, onToolBuilderClick }: OutrankLandingProps) {
   // Interactive States for landing page features
   const [typedKeyword, setTypedKeyword] = useState('best micro saas ideas 2026');
   const [playgroundKeyword, setPlaygroundKeyword] = useState('');
@@ -158,6 +159,12 @@ export default function OutrankLanding({ onLaunchApp, projectsCount, onPricingCl
               className="hover:text-emerald-500 text-indigo-400 font-extrabold flex items-center gap-1 bg-indigo-950/20 px-2.5 py-1 rounded-lg transition-all cursor-pointer border border-indigo-900/30"
             >
               🛠️ Free SEO Tools
+            </button>
+            <button 
+              onClick={onToolBuilderClick} 
+              className="hover:text-amber-400 text-emerald-400 font-extrabold flex items-center gap-1 bg-emerald-950/20 px-2.5 py-1 rounded-lg transition-all cursor-pointer border border-emerald-900/30"
+            >
+              ⚡ AI Tools Builder
             </button>
             <a href="#playground" className="hover:text-emerald-600 transition-colors">AI Playground</a>
             <button 

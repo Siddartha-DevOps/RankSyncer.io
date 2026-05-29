@@ -81,6 +81,8 @@ import AuthorityDashboard from './components/AuthorityDashboard';
 import DirectorySubmissionDashboard from './components/DirectorySubmissionDashboard';
 import SeoAuditTool from './components/SeoAuditTool';
 import FreeSeoTools from './components/FreeSeoTools';
+import AiToolsBuilder from './components/AiToolsBuilder';
+
 
 
 // Firebase Authentication and Relational Sync Client Integrations
@@ -113,7 +115,7 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(true);
 
   // Navigation & Core States
-  const [viewMode, setViewMode] = useState<'landing' | 'app' | 'pricing' | 'integrations' | 'seo-audit' | 'free-tools'>('landing');
+  const [viewMode, setViewMode] = useState<'landing' | 'app' | 'pricing' | 'integrations' | 'seo-audit' | 'free-tools' | 'tool-builder'>('landing');
   const [activeTab, setActiveTab] = useState<'dashboard' | 'projects' | 'keywords' | 'planner' | 'editor' | 'crawler' | 'settings' | 'brand' | 'backlinks' | 'authority' | 'directory'>('brand');
   const [keywordsSubTab, setKeywordsSubTab] = useState<'explore' | 'tracker' | 'ai-discovery'>('explore');
   
@@ -338,6 +340,8 @@ export default function App() {
       setViewMode('seo-audit');
     } else if (p.includes('tools') || h.includes('tools') || s.get('view') === 'free-tools' || s.get('view') === 'tools') {
       setViewMode('free-tools');
+    } else if (p.includes('tool-builder') || h.includes('tool-builder') || s.get('view') === 'tool-builder') {
+      setViewMode('tool-builder');
     }
   }, []);
 
@@ -1698,6 +1702,7 @@ export default function App() {
         onIntegrationsClick={() => setViewMode('integrations')}
         onSeoAuditClick={() => setViewMode('seo-audit')}
         onFreeToolsClick={() => setViewMode('free-tools')}
+        onToolBuilderClick={() => setViewMode('tool-builder')}
         projectsCount={projects.length}
       />
     );
@@ -1749,6 +1754,19 @@ export default function App() {
         onPricingClick={() => setViewMode('pricing')}
         onLaunchApp={() => setViewMode('app')}
       />
+    );
+  }
+
+  if (viewMode === 'tool-builder') {
+    return (
+      <div className="min-h-screen bg-slate-950 p-6 sm:p-12 overflow-y-auto">
+        <AiToolsBuilder 
+          onBackToLanding={() => setViewMode('landing')}
+          projects={projects}
+          selectedProjectId={selectedProject?.id || 'p-1'}
+          activePlan={activePlan}
+        />
+      </div>
     );
   }
 

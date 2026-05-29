@@ -99,6 +99,17 @@ import {
   logFreeToolGeneration,
   executeSeoToolAi,
 } from "./src/lib/seo/freeToolsService";
+import {
+  readAiToolsDb,
+  writeAiToolsDb,
+  executeAiToolBuilderGen,
+  AiTool,
+  AiToolTemplate,
+  AiToolSubmission,
+  AiToolAnalytic,
+  AiToolLead
+} from "./src/lib/seo/aiToolsBuilderService";
+
 
 // Initialize Stripe Client Lazily/Safely
 let stripeClient: any = null;
@@ -10243,6 +10254,433 @@ app.post("/api/free-tools/save-lead", (req, res) => {
     });
   } catch (err: any) {
     res.status(500).json({ error: "Failed to reserve lead credentials." });
+  }
+});
+
+
+// ==========================================
+// AI SEO TOOLS BUILDER ENDPOINTS
+// ==========================================
+
+// Safe formula evaluator definition
+function evaluateFormulaSafely(formulaExpr: string, inputs: Record<string, number>): number {
+  try {
+    let sanitizedExpr = formulaExpr;
+    
+    // Replace valid input variables with their numeric values
+    for (const [key, val] of Object.entries(inputs)) {
+      const numericVal = Number(val) || 0;
+      const regex = new RegExp(`\\b${key}\\b`, 'g');
+      sanitizedExpr = sanitizedExpr.replace(regex, String(numericVal));
+    }
+    
+    // Ensure only safe operations are executed
+    // Strip everything that isn't a safe math token to prevent execution abuse
+    const exprCheck = sanitizedExpr.replace(/Math\.(max|min|round|pow|floor|ceil|abs|sqrt)/g, "m");
+    if (/[^0-9\s+\-*/().,?:<>=!]/g.test(exprCheck)) {
+      console.warn("[SECURITY WARN] Forbidden character found in evaluated formula expression:", formulaExpr);
+      return 0;
+    }
+    
+    const result = new Function(`try { return (${sanitizedExpr}); } catch(e) { return 0; }`)();
+    const finalVal = Number(result);
+    return isNaN(finalVal) ? 0 : finalVal;
+  } catch (err) {
+    console.error(`[FORMULA EVALUATION FAILURE] Formula: "${formulaExpr}", error:`, err);
+    return 0;
+  }
+}
+
+// Get lists of all tools & templates
+app.get("/api/ai-tools/list", (req, res) => {
+  try {
+    const db = readAiToolsDb();
+    res.json({
+      success: true,
+      tools: db.ai_tools,
+      templates: db.ai_tool_templates
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: "Failed to collect AI tools data." });
+  }
+});
+
+// Recommend & Generate custom tool using AI
+app.post("/api/ai-tools/recommend", async (req, res) => {
+  try {
+    const { websiteUrl, businessNiche, industry, targetAudience, desiredToolType } = req.body;
+    
+    if (!businessNiche || !desiredToolType) {
+      return res.status(400).json({ error: "Missing required parameters: businessNiche & desiredToolType." });
+    }
+
+    const draftedTool = await executeAiToolBuilderGen(
+      websiteUrl || "",
+      businessNiche,
+      industry || "",
+      targetAudience || "",
+      desiredToolType
+    );
+
+    res.json({
+      success: true,
+      draftedTool
+    });
+  } catch (err: any) {
+    console.error("[API AI RECOMMEND FAILED]:", err);
+    res.status(500).json({ error: "Failed to perform AI Tool recommendation." });
+  }
+});
+
+// Create/Update a custom SEO tool
+app.post("/api/ai-tools/save", (req, res) => {
+  try {
+    const db = readAiToolsDb();
+    const toolPayload: Partial<AiTool> = req.body;
+
+    if (!toolPayload.tool_name || !toolPayload.tool_slug) {
+      return res.status(400).json({ error: "Tool name and slug are required parameters." });
+    }
+
+    const cleanSlug = toolPayload.tool_slug.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    let existingIndex = db.ai_tools.findIndex(t => t.id === toolPayload.id);
+
+    let savedTool: AiTool;
+
+    if (existingIndex >= 0) {
+      // Merge/update
+      const original = db.ai_tools[existingIndex];
+      savedTool = {
+        ...original,
+        ...toolPayload,
+        id: original.id, // preserve ID
+        tool_slug: cleanSlug,
+        created_at: original.created_at,
+        views: original.views || 0,
+        conversions: original.conversions || 0,
+      } as AiTool;
+      db.ai_tools[existingIndex] = savedTool;
+    } else {
+      // Create new
+      savedTool = {
+        id: toolPayload.id || `tool-${crypto.randomUUID()}`,
+        user_id: toolPayload.user_id || "user-general",
+        project_id: toolPayload.project_id || "p-1",
+        tool_name: toolPayload.tool_name,
+        tool_type: toolPayload.tool_type || "calculator",
+        tool_slug: cleanSlug,
+        publish_status: toolPayload.publish_status || "draft",
+        views: 0,
+        conversions: 0,
+        created_at: new Date().toISOString(),
+        description: toolPayload.description || "",
+        niche: toolPayload.niche || "",
+        industry: toolPayload.industry || "",
+        target_audience: toolPayload.target_audience || "",
+        website_url: toolPayload.website_url || "",
+        inputFields: toolPayload.inputFields || [],
+        outputFields: toolPayload.outputFields || [],
+        seo_settings: {
+          title: toolPayload.seo_settings?.title || toolPayload.tool_name,
+          meta_description: toolPayload.seo_settings?.meta_description || "",
+          slug: cleanSlug,
+          schema_markup: toolPayload.seo_settings?.schema_markup || "",
+          internal_links: toolPayload.seo_settings?.internal_links || [],
+          intro_markdown: toolPayload.seo_settings?.intro_markdown || "",
+          conclusion_markdown: toolPayload.seo_settings?.conclusion_markdown || "",
+        },
+        faqs: toolPayload.faqs || [],
+        cta_settings: {
+          headline: toolPayload.cta_settings?.headline || "Get Started Today!",
+          buttonText: toolPayload.cta_settings?.buttonText || "Get Started",
+          linkUrl: toolPayload.cta_settings?.linkUrl || "https://ranksyncer.io",
+          bannerStyle: toolPayload.cta_settings?.bannerStyle || "indigo"
+        },
+        lead_settings: {
+          enabled: toolPayload.lead_settings?.enabled ?? true,
+          title: toolPayload.lead_settings?.title || "Unlock personalized SEO recommendations for free",
+          buttonText: toolPayload.lead_settings?.buttonText || "Request Report",
+          formType: toolPayload.lead_settings?.formType || "email",
+          successMsg: toolPayload.lead_settings?.successMsg || "Success! Analysis details has been dispatched.",
+          showResultsOnlyAfterSubmit: toolPayload.lead_settings?.showResultsOnlyAfterSubmit ?? false
+        }
+      };
+      db.ai_tools.push(savedTool);
+    }
+
+    writeAiToolsDb(db);
+
+    res.json({
+      success: true,
+      tool: savedTool
+    });
+  } catch (err: any) {
+    console.error("[API AI SAVE FAILED]:", err);
+    res.status(500).json({ error: "Failed to publish or save custom tool details." });
+  }
+});
+
+// Delete custom tool
+app.post("/api/ai-tools/delete", (req, res) => {
+  try {
+    const db = readAiToolsDb();
+    const { id } = req.body;
+    
+    if (!id) return res.status(400).json({ error: "Missing tool ID." });
+
+    db.ai_tools = db.ai_tools.filter(t => t.id !== id);
+    // clean up cascade if needed, but keeping it simple
+    db.ai_tool_submissions = db.ai_tool_submissions.filter(s => s.tool_id !== id);
+    db.ai_tool_leads = db.ai_tool_leads.filter(l => l.tool_id !== id);
+    db.ai_tool_analytics = db.ai_tool_analytics.filter(a => a.tool_id !== id);
+
+    writeAiToolsDb(db);
+    res.json({ success: true, message: "Custom SEO tool deleted successfully." });
+  } catch (err: any) {
+    res.status(500).json({ error: "Error deleting tool." });
+  }
+});
+
+// Duplicate custom tool
+app.post("/api/ai-tools/duplicate", (req, res) => {
+  try {
+    const db = readAiToolsDb();
+    const { id } = req.body;
+
+    if (!id) return res.status(400).json({ error: "Missing tool ID." });
+
+    const source = db.ai_tools.find(t => t.id === id);
+    if (!source) return res.status(404).json({ error: "Source tool not found." });
+
+    const newId = `tool-${crypto.randomUUID()}`;
+    const cleanSlug = `${source.tool_slug}-copy-${Math.floor(Math.random() * 100)}`;
+
+    const duplicated: AiTool = {
+      ...source,
+      id: newId,
+      tool_name: `${source.tool_name} (Copy)`,
+      tool_slug: cleanSlug,
+      views: 0,
+      conversions: 0,
+      publish_status: "draft",
+      created_at: new Date().toISOString(),
+      seo_settings: {
+        ...source.seo_settings,
+        slug: cleanSlug,
+        title: `${source.seo_settings.title} (Copy)`,
+      }
+    };
+
+    db.ai_tools.push(duplicated);
+    writeAiToolsDb(db);
+
+    res.json({
+      success: true,
+      duplicated
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: "Failed to duplicate custom tool." });
+  }
+});
+
+// Run live calculator logic on submissions
+app.post("/api/ai-tools/submit-run", (req, res) => {
+  try {
+    const db = readAiToolsDb();
+    const { toolId, inputs, leadInfo } = req.body;
+
+    if (!toolId) return res.status(400).json({ error: "Missing toolId." });
+
+    const tool = db.ai_tools.find(t => t.id === toolId);
+    if (!tool) return res.status(404).json({ error: "Requested calculator widget not found." });
+
+    // Ensure inputs are represented as key-number mappings
+    const numericInputs: Record<string, number> = {};
+    for (const field of tool.inputFields) {
+      const val = inputs?.[field.key];
+      numericInputs[field.key] = Number(val) || Number(field.defaultValue) || 0;
+    }
+
+    // Evaluate formulas
+    const outputs: Record<string, number> = {};
+    for (const output of tool.outputFields) {
+      outputs[output.key] = evaluateFormulaSafely(output.formulaExpr, numericInputs);
+    }
+
+    // Log calculation run in analytics
+    const analyId = `an-${crypto.randomUUID()}`;
+    db.ai_tool_analytics.push({
+      id: analyId,
+      tool_id: toolId,
+      event_type: "usage",
+      timestamp: new Date().toISOString()
+    });
+
+    // If leadInfo exists, create lead capture transaction
+    let leadCreated = false;
+    if (leadInfo && leadInfo.email && leadInfo.email.trim().includes("@")) {
+      const cleanEmail = leadInfo.email.trim().toLowerCase();
+      
+      const leadId = `lead-${crypto.randomUUID()}`;
+      const newLead: AiToolLead = {
+        id: leadId,
+        tool_id: toolId,
+        email: cleanEmail,
+        name: leadInfo.name,
+        website_url: leadInfo.website,
+        inputs_snapshot: JSON.stringify(inputs),
+        created_at: new Date().toISOString()
+      };
+      
+      db.ai_tool_leads.push(newLead);
+      
+      // Also log cascade submission
+      db.ai_tool_submissions.push({
+        id: `sub-${crypto.randomUUID()}`,
+        tool_id: toolId,
+        inputs,
+        outputs,
+        lead_info: {
+          email: cleanEmail,
+          name: leadInfo.name,
+          website: leadInfo.website
+        },
+        created_at: new Date().toISOString()
+      });
+
+      // Increment conversion metrics
+      tool.conversions = (tool.conversions || 0) + 1;
+      
+      // Update analytics log
+      db.ai_tool_analytics.push({
+        id: `an-${crypto.randomUUID()}`,
+        tool_id: toolId,
+        event_type: "lead",
+        timestamp: new Date().toISOString()
+      });
+
+      leadCreated = true;
+
+      // Simulation trigger details printed to dev terminal
+      console.log(`\n---------------------------------------`);
+      console.log(`[AI TOOLS LEAD ENGAGEMENT TRIGGERED]`);
+      console.log(`Tool Identifier: ${tool.tool_name} | Slug: ${tool.tool_slug}`);
+      console.log(`Lead Contact: ${cleanEmail} (Name: ${leadInfo.name || "N/A"})`);
+      console.log(`Form Configuration Trigger: "${tool.lead_settings.formType}"`);
+      console.log(`Outputs Catalog Sent:`, outputs);
+      console.log(`---------------------------------------\n`);
+    }
+
+    writeAiToolsDb(db);
+
+    res.json({
+      success: true,
+      outputs,
+      leadCreated,
+      successMsg: tool.lead_settings.successMsg
+    });
+  } catch (err: any) {
+    console.error("[API SUBMIT INTERACT FAILED]:", err);
+    res.status(500).json({ error: "Failed to process formula calculations." });
+  }
+});
+
+// Track simple view counts safely
+app.post("/api/ai-tools/track-event", (req, res) => {
+  try {
+    const db = readAiToolsDb();
+    const { toolId, eventType } = req.body;
+
+    if (!toolId || !eventType) {
+      return res.status(400).json({ error: "Missing required parameters: toolId and eventType." });
+    }
+
+    const tool = db.ai_tools.find(t => t.id === toolId);
+    if (!tool) return res.status(404).json({ error: "Tool not found." });
+
+    if (eventType === "view") {
+      tool.views = (tool.views || 0) + 1;
+    }
+
+    db.ai_tool_analytics.push({
+      id: `an-${crypto.randomUUID()}`,
+      tool_id: toolId,
+      event_type: eventType,
+      timestamp: new Date().toISOString()
+    });
+
+    writeAiToolsDb(db);
+    res.json({ success: true, views: tool.views });
+  } catch (err: any) {
+    res.status(500).json({ error: "Failed to record analytic event." });
+  }
+});
+
+// Fetch leads gathered by a specific tool
+app.get("/api/ai-tools/leads/:toolId", (req, res) => {
+  try {
+    const db = readAiToolsDb();
+    const { toolId } = req.params;
+
+    const leads = db.ai_tool_leads.filter(l => l.tool_id === toolId);
+    const submissions = db.ai_tool_submissions.filter(s => s.tool_id === toolId);
+
+    res.json({
+      success: true,
+      leads,
+      submissions
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: "Failed to gather custom leads." });
+  }
+});
+
+// Fetch aggregate analytics trends for a tool to draw Recharts charts
+app.get("/api/ai-tools/analytics/:toolId", (req, res) => {
+  try {
+    const db = readAiToolsDb();
+    const { toolId } = req.params;
+
+    const tool = db.ai_tools.find(t => t.id === toolId);
+    if (!tool) {
+      return res.status(404).json({ error: "Tool template not found for analytics profiling." });
+    }
+
+    const logs = db.ai_tool_analytics.filter(a => a.tool_id === toolId);
+    
+    // Group records by past 7 days to form a beautiful chart
+    const days: Record<string, { date: string; views: number; usage: number; leads: number }> = {};
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(Date.now() - i * 86400000);
+      const str = d.toISOString().split("T")[0];
+      // Format as e.g. "May 25"
+      const dayLabel = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+      days[str] = { date: dayLabel, views: 0, usage: 0, leads: 0 };
+    }
+
+    logs.forEach(log => {
+      const dateStr = log.timestamp.split("T")[0];
+      if (days[dateStr]) {
+        if (log.event_type === "view") days[dateStr].views += 1;
+        if (log.event_type === "usage") days[dateStr].usage += 1;
+        if (log.event_type === "lead") days[dateStr].leads += 1;
+      }
+    });
+
+    const dataset = Object.values(days);
+
+    res.json({
+      success: true,
+      summary: {
+        views: tool.views || 0,
+        usage: logs.filter(a => a.event_type === "usage").length,
+        leads: tool.conversions || 0,
+        conversion_rate: tool.views > 0 ? Math.round((tool.conversions / tool.views) * 100) : 0,
+      },
+      dataset
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: "Failed to aggregate interactive tracking analytics." });
   }
 });
 
