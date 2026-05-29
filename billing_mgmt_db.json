@@ -1,0 +1,101 @@
+{
+  "config": {
+    "enabled": true,
+    "basePricePerSite": 99,
+    "tiers": [
+      { "min": 1, "max": 1, "discountPercent": 0, "name": "Standard Starter" },
+      { "min": 2, "max": 4, "discountPercent": 10, "name": "Growth Duo/Team" },
+      { "min": 5, "max": 19, "discountPercent": 15, "name": "Pro Agency" },
+      { "min": 20, "max": 9999, "discountPercent": 20, "name": "Enterprise Suite" }
+    ]
+  },
+  "volume_discount_logs": [
+    {
+      "id": "log-001",
+      "user_id": "demo-user",
+      "subscription_id": "sub_premium_demo_384",
+      "active_sites": 1,
+      "discount_percentage": 0,
+      "original_price": 99.00,
+      "discounted_price": 99.00,
+      "adjustment_amount": 0.00,
+      "applied_at": "2026-04-10T14:30:00.000Z"
+    },
+    {
+      "id": "log-002",
+      "user_id": "demo-user",
+      "subscription_id": "sub_premium_demo_384",
+      "active_sites": 2,
+      "discount_percentage": 10,
+      "original_price": 198.00,
+      "discounted_price": 178.20,
+      "adjustment_amount": 19.80,
+      "applied_at": "2026-05-01T09:12:00.000Z"
+    },
+    {
+      "id": "log-003",
+      "user_id": "demo-user",
+      "subscription_id": "sub_premium_demo_384",
+      "active_sites": 5,
+      "discount_percentage": 15,
+      "original_price": 495.00,
+      "discounted_price": 420.75,
+      "adjustment_amount": 74.25,
+      "applied_at": "2026-05-20T10:05:00.000Z"
+    }
+  ],
+  "billing_adjustments": [
+    {
+      "id": "adj-001",
+      "user_id": "demo-user",
+      "subscription_id": "sub_premium_demo_384",
+      "active_sites": 2,
+      "adjustment_amount": 19.80,
+      "original_price": 198.00,
+      "discounted_price": 178.20,
+      "applied_at": "2026-05-01T09:15:00.000Z"
+    },
+    {
+      "id": "adj-002",
+      "user_id": "demo-user",
+      "subscription_id": "sub_premium_demo_384",
+      "active_sites": 5,
+      "adjustment_amount": 74.25,
+      "original_price": 495.00,
+      "discounted_price": 420.75,
+      "applied_at": "2026-05-20T10:10:00.000Z"
+    }
+  ],
+  "site_count_history": [
+    {
+      "id": "h-001",
+      "user_id": "demo-user",
+      "active_sites": 1,
+      "applied_at": "2026-04-10T14:30:00.000Z"
+    },
+    {
+      "id": "h-002",
+      "user_id": "demo-user",
+      "active_sites": 2,
+      "applied_at": "2026-05-01T09:12:00.000Z"
+    },
+    {
+      "id": "h-003",
+      "user_id": "demo-user",
+      "active_sites": 5,
+      "applied_at": "2026-05-20T10:05:00.000Z"
+    }
+  ],
+  "subscriptions": {
+    "demo-user": {
+      "status": "active",
+      "activeSites": 5,
+      "planId": "premium",
+      "currentPrice": 420.75,
+      "basePrice": 99,
+      "discountPercent": 15,
+      "originalPrice": 495.00,
+      "updated_at": "2026-05-20T10:05:00.000Z"
+    }
+  }
+}

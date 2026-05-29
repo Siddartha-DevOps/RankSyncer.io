@@ -2008,6 +2008,292 @@ app.post("/api/stripe/create-checkout", async (req, res) => {
 });
 
 // ==========================================
+// Multi-Site Volume Discount billing & recalculation engine
+// ==========================================
+const billingDbPath = path.join(process.cwd(), "billing_mgmt_db.json");
+
+interface BillingConfig {
+  enabled: boolean;
+  basePricePerSite: number;
+  tiers: { min: number; max: number; discountPercent: number; name: string }[];
+}
+
+interface VolumeDiscountLog {
+  id: string;
+  user_id: string;
+  subscription_id: string;
+  active_sites: number;
+  discount_percentage: number;
+  original_price: number;
+  discounted_price: number;
+  adjustment_amount: number;
+  applied_at: string;
+}
+
+interface BillingAdjustment {
+  id: string;
+  user_id: string;
+  subscription_id: string;
+  active_sites: number;
+  adjustment_amount: number;
+  original_price: number;
+  discounted_price: number;
+  applied_at: string;
+}
+
+interface SiteCountHistory {
+  id: string;
+  user_id: string;
+  active_sites: number;
+  applied_at: string;
+}
+
+interface SubscriptionState {
+  status: string;
+  activeSites: number;
+  planId: string;
+  currentPrice: number;
+  basePrice: number;
+  discountPercent: number;
+  originalPrice: number;
+  updated_at: string;
+}
+
+interface BillingDb {
+  config: BillingConfig;
+  volume_discount_logs: VolumeDiscountLog[];
+  billing_adjustments: BillingAdjustment[];
+  site_count_history: SiteCountHistory[];
+  subscriptions: Record<string, SubscriptionState>;
+}
+
+function readBillingDb(): BillingDb {
+  try {
+    if (fs.existsSync(billingDbPath)) {
+      return JSON.parse(fs.readFileSync(billingDbPath, "utf8"));
+    }
+  } catch (err) {
+    console.error("[BILLING DB]: Error reading billing_mgmt_db.json:", err);
+  }
+  return {
+    config: {
+      enabled: true,
+      basePricePerSite: 99,
+      tiers: [
+        { min: 1, max: 1, discountPercent: 0, name: "Standard Starter" },
+        { min: 2, max: 4, discountPercent: 10, name: "Growth Duo/Team" },
+        { min: 5, max: 19, discountPercent: 15, name: "Pro Agency" },
+        { min: 20, max: 9999, discountPercent: 20, name: "Enterprise Suite" }
+      ]
+    },
+    volume_discount_logs: [],
+    billing_adjustments: [],
+    site_count_history: [],
+    subscriptions: {}
+  };
+}
+
+function writeBillingDb(data: BillingDb) {
+  try {
+    fs.writeFileSync(billingDbPath, JSON.stringify(data, null, 2), "utf8");
+  } catch (err) {
+    console.error("[BILLING DB]: Serious error writing to billing_mgmt_db.json:", err);
+  }
+}
+
+// 1. Get Discount Engine Configurations
+app.get("/api/billing/config", (req, res) => {
+  try {
+    const db = readBillingDb();
+    return res.json({ success: true, config: db.config });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || "Failed to load billing config" });
+  }
+});
+
+// 2. Adjust Percentages, Tiers, Base Prices and Toggle Discount Status
+app.post("/api/billing/config", (req, res) => {
+  try {
+    const { enabled, basePricePerSite, tiers } = req.body;
+    const db = readBillingDb();
+    
+    if (typeof enabled === 'boolean') {
+      db.config.enabled = enabled;
+    }
+    if (typeof basePricePerSite === 'number') {
+      db.config.basePricePerSite = basePricePerSite;
+    }
+    if (Array.isArray(tiers)) {
+      db.config.tiers = tiers;
+    }
+    
+    writeBillingDb(db);
+    return res.json({ success: true, config: db.config, message: "Volume Discount tier configurations updated successfully" });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || "Failed to save billing config" });
+  }
+});
+
+// 3. Subscription Pricing Recalculation Engine
+app.post("/api/billing/recalculate", (req, res) => {
+  try {
+    const { userId = "demo-user", activeSitesCount } = req.body;
+    const db = readBillingDb();
+    
+    let sites = typeof activeSitesCount === 'number' ? activeSitesCount : 1;
+    if (sites < 1) sites = 1; // Base boundary limit protection
+    
+    const config = db.config;
+    let discountPercent = 0;
+    
+    if (config.enabled && sites > 0) {
+      const matchingTier = config.tiers.find(t => sites >= t.min && sites <= t.max);
+      if (matchingTier) {
+        discountPercent = matchingTier.discountPercent;
+      }
+    }
+    
+    const originalPrice = sites * config.basePricePerSite;
+    const discountedPrice = originalPrice * (1 - discountPercent / 100);
+    const adjustmentAmount = originalPrice - discountedPrice;
+    
+    const appliedAt = new Date().toISOString();
+    
+    // Save/update subscription record
+    db.subscriptions[userId] = {
+      status: "active",
+      activeSites: sites,
+      planId: "premium",
+      currentPrice: parseFloat(discountedPrice.toFixed(2)),
+      basePrice: config.basePricePerSite,
+      discountPercent,
+      originalPrice: parseFloat(originalPrice.toFixed(2)),
+      updated_at: appliedAt
+    };
+    
+    // Save Audit Logs
+    const logId = `vdl-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    const discountLog = {
+      id: logId,
+      user_id: userId,
+      subscription_id: `sub_premium_${userId}_${Math.floor(Math.random() * 900 + 100)}`,
+      active_sites: sites,
+      discount_percentage: discountPercent,
+      original_price: parseFloat(originalPrice.toFixed(2)),
+      discounted_price: parseFloat(discountedPrice.toFixed(2)),
+      adjustment_amount: parseFloat(adjustmentAmount.toFixed(2)),
+      applied_at: appliedAt
+    };
+    db.volume_discount_logs.push(discountLog);
+    
+    if (adjustmentAmount > 0) {
+      const adjId = `adj-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+      db.billing_adjustments.push({
+        id: adjId,
+        user_id: userId,
+        subscription_id: discountLog.subscription_id,
+        active_sites: sites,
+        adjustment_amount: parseFloat(adjustmentAmount.toFixed(2)),
+        original_price: parseFloat(originalPrice.toFixed(2)),
+        discounted_price: parseFloat(discountedPrice.toFixed(2)),
+        applied_at: appliedAt
+      });
+    }
+    
+    const historyId = `sch-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    db.site_count_history.push({
+      id: historyId,
+      user_id: userId,
+      active_sites: sites,
+      applied_at: appliedAt
+    });
+    
+    writeBillingDb(db);
+    
+    return res.json({
+      success: true,
+      subscription: db.subscriptions[userId],
+      log: discountLog,
+      message: `Automatically calculated pricing totals! Assigned tier of ${discountPercent}% discount for ${sites} sites successfully.`
+    });
+  } catch (err: any) {
+    console.error("Failed to run recalculate API:", err);
+    return res.status(500).json({ error: err.message || "Recalculation failed" });
+  }
+});
+
+// 4. Retrieve logs, billing adjustments, and site count history for user
+app.get("/api/billing/history", (req, res) => {
+  try {
+    const { userId = "demo-user" } = req.query;
+    const db = readBillingDb();
+    
+    const logs = db.volume_discount_logs.filter(l => l.user_id === userId);
+    const adjustments = db.billing_adjustments.filter(a => a.user_id === userId);
+    const history = db.site_count_history.filter(h => h.user_id === userId);
+    const currentSubscription = db.subscriptions[userId as string] || null;
+    
+    return res.json({
+      success: true,
+      logs,
+      adjustments,
+      history,
+      currentSubscription
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || "Failed to load billing history" });
+  }
+});
+
+// 5. Get Billing Analytics Dashboard Insights
+app.get("/api/billing/analytics", (req, res) => {
+  try {
+    const db = readBillingDb();
+    
+    // Aggressive analytics computation
+    const totalAdjustments = db.billing_adjustments.length;
+    const totalSavingsSum = db.billing_adjustments.reduce((acc, current) => acc + current.adjustment_amount, 0);
+    
+    const activeSubKeys = Object.keys(db.subscriptions);
+    const avgSites = activeSubKeys.length > 0
+      ? parseFloat((activeSubKeys.reduce((acc, uid) => acc + db.subscriptions[uid].activeSites, 0) / activeSubKeys.length).toFixed(1))
+      : 1;
+      
+    const totalRevenueActual = activeSubKeys.reduce((acc, uid) => acc + db.subscriptions[uid].currentPrice, 0);
+    const totalRevenueOriginal = activeSubKeys.reduce((acc, uid) => acc + db.subscriptions[uid].originalPrice, 0);
+    
+    const revenueImpactPercentage = totalRevenueOriginal > 0
+      ? parseFloat(((1 - totalRevenueActual / totalRevenueOriginal) * 100).toFixed(1))
+      : 15.0; // default indicator or actual
+      
+    // Count tier mapping density
+    const tierUtilizationMap: Record<string, number> = { "0%": 0, "10%": 0, "15%": 0, "20%": 0 };
+    db.volume_discount_logs.forEach(log => {
+      const pctKey = `${log.discount_percentage}%`;
+      tierUtilizationMap[pctKey] = (tierUtilizationMap[pctKey] || 0) + 1;
+    });
+    
+    return res.json({
+      success: true,
+      analytics: {
+        totalDiscountsApplied: totalAdjustments,
+        totalSavingsAmount: parseFloat(totalSavingsSum.toFixed(2)),
+        averageSitesPerAccount: avgSites,
+        revenueImpactPercent: revenueImpactPercentage,
+        tierUtilization: tierUtilizationMap,
+        activeSubscriptionsCount: activeSubKeys.length,
+        actualRevenueTotal: parseFloat(totalRevenueActual.toFixed(2)),
+        originalRevenueTotal: parseFloat(totalRevenueOriginal.toFixed(2)),
+        logsFeed: db.volume_discount_logs.slice(-15).reverse(),
+        adjustmentsFeed: db.billing_adjustments.slice(-15).reverse()
+      }
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || "Failed to compute billing analytics" });
+  }
+});
+
+// ==========================================
 // AUTOMATED AI ARTICLE PUBLISHING SCHEDULER PROTOCOLS
 // ==========================================
 

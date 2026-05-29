@@ -36,6 +36,31 @@ export default function PricingPage({ onBackToLanding, onLaunchApp, onIntegratio
     }));
   };
 
+  // Synchronous volume-based calculations for the visual pricing indicator
+  const getPricingRebate = (count: number) => {
+    let pct = 0;
+    if (count >= 2 && count <= 4) pct = 10;
+    else if (count >= 5 && count <= 19) pct = 15;
+    else if (count >= 20) pct = 20;
+    
+    const baseNodePrice = 99;
+    const itemsCount = count || 1;
+    const gross = itemsCount * baseNodePrice;
+    const rebateAmount = gross * (pct / 100);
+    const net = gross - rebateAmount;
+    
+    return {
+      activeCount: count,
+      percentOff: pct,
+      originalTotal: gross,
+      savedTotal: rebateAmount,
+      finalTotal: net,
+      costPerSite: baseNodePrice * (1 - pct / 100)
+    };
+  };
+
+  const calculatedRebate = getPricingRebate(projectsCount);
+
   const faqs = [
     {
       question: "Are there any hidden set-up fees or continuous retention models?",
@@ -228,18 +253,27 @@ export default function PricingPage({ onBackToLanding, onLaunchApp, onIntegratio
                   </h3>
                   
                   {/* Price node */}
-                  <div className="flex items-baseline justify-center lg:justify-start gap-4 py-2">
-                    <span className="text-5xl sm:text-6.5xl font-black text-slate-950 font-sans tracking-tight">
-                      $99
-                    </span>
-                    <div className="flex flex-col text-left">
-                      <span className="text-sm font-semibold text-slate-400 line-through leading-tight">
-                        $200
+                  <div className="flex flex-col items-center lg:items-start py-2">
+                    <div className="flex items-baseline justify-center lg:justify-start gap-4">
+                      <span className="text-5.5xl sm:text-6.5xl font-black text-slate-950 font-sans tracking-tight">
+                        ${projectsCount > 0 ? calculatedRebate.finalTotal : 99}
                       </span>
-                      <span className="text-xs font-bold text-slate-500">
-                        /mo
-                      </span>
+                      <div className="flex flex-col text-left">
+                        <span className="text-xs font-bold text-slate-500">
+                          {projectsCount > 0 ? "total / mo" : "/mo"}
+                        </span>
+                        {calculatedRebate.percentOff > 0 && (
+                          <span className="text-[10px] text-emerald-600 font-extrabold font-mono uppercase bg-emerald-50 px-2 py-0.5 rounded border border-emerald-100 mt-1">
+                            {calculatedRebate.percentOff}% Volume Disc. Applied
+                          </span>
+                        )}
+                      </div>
                     </div>
+                    {projectsCount > 0 && (
+                      <p className="text-[10px] text-slate-500 font-bold mt-2">
+                        Gross subscription: <span className="line-through text-slate-400">${calculatedRebate.originalTotal}</span> • Rebated Rate: <span className="text-indigo-600">${calculatedRebate.finalTotal} / mo</span>
+                      </p>
+                    )}
                   </div>
                 </div>
 

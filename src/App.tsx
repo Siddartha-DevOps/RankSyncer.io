@@ -62,6 +62,7 @@ import AIContentPlanner from './components/AIContentPlanner';
 import AutoPublishScheduler from './components/AutoPublishScheduler';
 import OutrankLanding from './components/OutrankLanding';
 import PricingPage from './components/PricingPage';
+import BillingDashboardView from './components/BillingDashboardView';
 import BrandIdentityCenter from './components/BrandIdentityCenter';
 import EnterpriseBrandVoiceSuite from './components/EnterpriseBrandVoiceSuite';
 import RankSyncerLogo from './components/RankSyncerLogo';
@@ -332,6 +333,28 @@ export default function App() {
     return (saved as 'free' | 'premium') || 'free';
   });
   const [isRedirectingToStripe, setIsRedirectingToStripe] = useState(false);
+
+  // Synchronically report site changes to the billing recalculation engine in the background
+  useEffect(() => {
+    if (activePlan === 'premium') {
+      const activeSitesCount = projects.length;
+      fetch('/api/billing/recalculate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: currentUser?.uid || "demo-user", activeSitesCount })
+      })
+      .then(res => {
+        if (!res.ok) throw new Error('API server was unable to execute recalculation');
+        return res.json();
+      })
+      .then(data => {
+        console.log('[BILLING AUTOMATION STATE]: Synced site totals matching Pro plan: ', data);
+      })
+      .catch(err => {
+        console.error('[BILLING AUTOMATION ERROR]: Failed syncing site total count:', err);
+      });
+    }
+  }, [projects.length, activePlan, currentUser]);
 
   // Deep Link URI Router Listener for public SEO Audit
   useEffect(() => {
@@ -4724,78 +4747,13 @@ export default function App() {
                 </div>
               </div>
 
-              {/* SaaS Subscription & Stripe Billing Center */}
-              <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-2xs space-y-4 relative overflow-hidden">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                  <div className="flex items-center space-x-4">
-                    <div className="h-12 w-12 bg-indigo-50 border border-indigo-100 rounded-2xl flex items-center justify-center text-indigo-600 shrink-0">
-                      <CreditCard className="h-6 w-6 text-indigo-500" />
-                    </div>
-                    <div>
-                      <h3 className="font-extrabold text-slate-900 text-sm font-sans flex items-center gap-2">
-                        SaaS Subscription & Billing Workspace
-                        {activePlan === 'premium' ? (
-                          <span className="bg-blue-100 text-blue-800 font-black text-[9px] px-2 py-0.5 rounded-full uppercase tracking-wider animate-pulse">PRO ACTIVE</span>
-                        ) : (
-                          <span className="bg-slate-100 text-slate-600 font-bold text-[9px] px-2 py-0.5 rounded-full uppercase tracking-wider">FREE SANDBOX</span>
-                        )}
-                      </h3>
-                      <p className="text-slate-500 text-xs mt-0.5 max-w-xl">
-                        Unlock autonomous rank optimization loops, automatic SERP crawl nodes, and syndication webhooks.
-                      </p>
-                    </div>
-                  </div>
-
-                  <div>
-                    {activePlan === 'premium' ? (
-                      <button 
-                        onClick={() => {
-                          setActivePlan('free');
-                          localStorage.setItem('rs_active_plan', 'free');
-                        }}
-                        className="px-4 py-1.5 bg-slate-100 hover:bg-rose-50 text-slate-700 hover:text-rose-600 text-xs font-bold rounded-xl transition cursor-pointer"
-                      >
-                        Downgrade Tier
-                      </button>
-                    ) : (
-                      <button 
-                        onClick={() => handleStripeCheckout('premium')}
-                        disabled={isRedirectingToStripe}
-                        className="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-black rounded-xl transition cursor-pointer shadow-sm flex items-center gap-1.5 disabled:opacity-50"
-                      >
-                        {isRedirectingToStripe ? (
-                          <>
-                            <span className="animate-spin h-3 w-3 border-2 border-white border-t-transparent rounded-full" />
-                            <span>Connecting...</span>
-                          </>
-                        ) : (
-                          <>
-                            <span>Upgrade to Pro ($49/mo)</span>
-                          </>
-                        )}
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-3 border-t border-slate-100">
-                  <div className={`p-4 rounded-2xl border ${activePlan === 'free' ? 'border-amber-200 bg-amber-50/20' : 'border-slate-100 bg-slate-50/40'}`}>
-                    <h4 className="text-xs font-black text-slate-800 mb-1 font-sans">Free Sandbox Plan</h4>
-                    <p className="text-slate-500 text-[11px] leading-relaxed">
-                      Track up to 15 key terms manual indexing. Local client cache persistence. Simulated direct publishing.
-                    </p>
-                  </div>
-                  <div className={`p-4 rounded-2xl border ${activePlan === 'premium' ? 'border-indigo-200 bg-indigo-50/20' : 'border-slate-100 bg-slate-50/40'}`}>
-                    <h4 className="text-xs font-black text-slate-800 mb-1 font-sans flex items-center justify-between">
-                      SEO Autopilot Premium Plan
-                      <span className="text-[10px] text-indigo-600 font-extrabold font-mono">$49/month</span>
-                    </h4>
-                    <p className="text-slate-500 text-[11px] leading-relaxed">
-                      Track up to 100 high-priority phrases, initiate 5 autonomous daily articles drafting, and open live Webhooks (Vercel/Netlify).
-                    </p>
-                  </div>
-                </div>
-              </div>
+              {/* SaaS Subscription & Stripe Billing Center with Volume Discounts */}
+              <BillingDashboardView
+                projectsCount={projects.length}
+                activePlan={activePlan}
+                setActivePlan={setActivePlan}
+                userId={currentUser?.uid || "demo-user"}
+              />
 
               <div className="bg-white rounded-3xl border border-slate-200 shadow-2xs divide-y divide-slate-100 overflow-hidden">
                 
