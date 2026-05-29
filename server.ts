@@ -100,6 +100,13 @@ import {
   executeSeoToolAi,
 } from "./src/lib/seo/freeToolsService";
 import {
+  readCompetitorDb,
+  writeCompetitorDb,
+  saveCompetitorLead,
+  runCompetitorAnalysis,
+  generateDeterministicCompetitorFallback
+} from "./src/lib/seo/competitorService";
+import {
   readAiToolsDb,
   writeAiToolsDb,
   executeAiToolBuilderGen,
@@ -10254,6 +10261,112 @@ app.post("/api/free-tools/save-lead", (req, res) => {
     });
   } catch (err: any) {
     res.status(500).json({ error: "Failed to reserve lead credentials." });
+  }
+});
+
+// ==========================================
+// COMPETITOR GAP & AUTHORITY ANALYSIS ENDPOINTS
+// ==========================================
+
+app.get("/api/competitor-analysis/report/:id", (req, res) => {
+  try {
+    const { id } = req.params;
+    const db = readCompetitorDb();
+    const report = db.competitor_analyses.find((r) => r.analysis_id === id);
+    if (!report) {
+      return res.status(404).json({ success: false, error: "Competitor analysis report not found." });
+    }
+    res.json({ success: true, report });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: "Failed to retrieve competitor analysis report." });
+  }
+});
+
+app.get("/api/competitor-analysis/history", (req, res) => {
+  try {
+    const { websiteUrl } = req.query;
+    const db = readCompetitorDb();
+    let history = db.competitor_analyses;
+    if (websiteUrl) {
+      const cleanUrl = String(websiteUrl).trim().toLowerCase().replace(/^(https?:\/\/)?(www\.)?/, "");
+      history = history.filter((r) => r.website_url.includes(cleanUrl));
+    }
+    res.json({ success: true, history: history.slice(-10).reverse() });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: "Failed to query competitor analysis history." });
+  }
+});
+
+app.post("/api/competitor-analysis/save-lead", (req, res) => {
+  try {
+    const { email, websiteUrl } = req.body;
+    if (!email || !email.includes("@")) {
+      return res.status(400).json({ success: false, error: "Please provide a valid email address." });
+    }
+    const lead = saveCompetitorLead(email, websiteUrl || "");
+    // Sync with free-tools lead capture
+    saveFreeToolLead(email, websiteUrl || "", "seo-competitor-analysis");
+    res.json({ success: true, lead, message: "Lead credentials cached successfully." });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: "Failed to capture lead details." });
+  }
+});
+
+app.post("/api/competitor-analysis/generate", async (req, res) => {
+  try {
+    const {
+      websiteUrl,
+      competitorUrls,
+      userId = "anonymous",
+      email,
+      activePlan = "free"
+    } = req.body;
+
+    if (!websiteUrl) {
+      return res.status(400).json({ success: false, error: "Missing required parameter websiteUrl." });
+    }
+    if (!competitorUrls || !Array.isArray(competitorUrls) || competitorUrls.length === 0) {
+      return res.status(400).json({ success: false, error: "Please provide at least one competitor URL to compare." });
+    }
+
+    // 1. Check free tool rate limit
+    const limitCheck = checkFreeToolRateLimit(userId, email, activePlan);
+    if (!limitCheck.allowed) {
+      return res.status(429).json({
+        success: false,
+        error: "Your free tier generation quota has been exhausted for today.",
+        remaining: 0,
+        max: limitCheck.max,
+        tier: limitCheck.tier,
+      });
+    }
+
+    // 2. Execute analysis
+    const report = await runCompetitorAnalysis(userId, websiteUrl, competitorUrls, email);
+
+    // 3. Log generation in main free tools index
+    logFreeToolGeneration(userId, "seo-competitor-analysis", { websiteUrl, competitorUrls }, report, email, websiteUrl);
+
+    // 4. Increment usage counter
+    incrementFreeToolUsage(userId, email, activePlan);
+
+    // 5. If email was passed, preserve lead
+    if (email && email.trim().includes("@")) {
+      saveCompetitorLead(email, websiteUrl);
+      saveFreeToolLead(email, websiteUrl, "seo-competitor-analysis");
+    }
+
+    const freshLimit = checkFreeToolRateLimit(userId, email, activePlan);
+    res.json({
+      success: true,
+      report,
+      remaining: freshLimit.remaining,
+      max: freshLimit.max,
+      tier: freshLimit.tier
+    });
+  } catch (error: any) {
+    console.error(`[COMPETITOR CORE GENERATION FAILURE]:`, error);
+    res.status(500).json({ success: false, error: error.message || "Failed to finalize competitor analysis." });
   }
 });
 

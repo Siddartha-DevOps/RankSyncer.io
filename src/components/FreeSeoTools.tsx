@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import CompetitorAnalysisTool from "./CompetitorAnalysisTool";
 import {
   Sparkles,
   ArrowRight,
@@ -105,6 +106,14 @@ const FREE_TOOLS: ToolConfig[] = [
     category: "keyword",
     iconName: "Terminal",
     popularityScore: 90,
+  },
+  {
+    slug: "seo-competitor-analysis",
+    name: "SEO Competitor Analysis Tool",
+    description: "Compare your website against competitors and discover SEO gaps, keyword opportunities, content gaps, and backlinks.",
+    category: "keyword",
+    iconName: "TrendingUp",
+    popularityScore: 97,
   },
 ];
 
@@ -374,6 +383,8 @@ export default function FreeSeoTools({
         return <Link className={classes} />;
       case "Terminal":
         return <Terminal className={classes} />;
+      case "TrendingUp":
+        return <TrendingUp className={classes} />;
       default:
         return <Sparkles className={classes} />;
     }
@@ -640,6 +651,53 @@ export default function FreeSeoTools({
                 Claim Premium Account
               </button>
             </div>
+          </div>
+        ) : activeTool === "seo-competitor-analysis" ? (
+          <div className="flex-1 max-w-7xl w-full mx-auto px-6 py-6 flex flex-col gap-6">
+            <div className="flex items-center gap-2 select-none">
+              <button
+                onClick={() => selectTool(null)}
+                className="text-xs font-bold text-slate-400 hover:text-white flex items-center gap-1 transition"
+              >
+                &larr; Catalog Overview
+              </button>
+              <span className="text-slate-600">/</span>
+              <span className="text-xs text-slate-450 font-medium">
+                SEO Competitor Gaps Analysis
+              </span>
+            </div>
+            <CompetitorAnalysisTool
+              visitorEmail={visitorEmail}
+              visitorUrl={visitorUrl}
+              onLaunchApp={onLaunchApp}
+              onSaveLead={async (email, websiteUrl) => {
+                try {
+                  const res = await fetch("/api/competitor-analysis/save-lead", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ email, websiteUrl }),
+                  });
+                  if (res.ok) {
+                    const data = await res.json();
+                    if (data.success) {
+                      localStorage.setItem("ranksyncer_free_tools_email", email);
+                      localStorage.setItem("ranksyncer_free_tools_website", websiteUrl);
+                      setVisitorEmail(email);
+                      setVisitorUrl(websiteUrl);
+                      setRegistered(true);
+                      fetchLimits();
+                      fetchAnalytics();
+                      return data.lead;
+                    }
+                  }
+                } catch (e) {
+                  console.error("Failed to capture lead details in Free Tools frame", e);
+                }
+                return null;
+              }}
+              rateLimit={rateLimit}
+              refreshLimits={fetchLimits}
+            />
           </div>
         ) : (
           /* ==========================================
