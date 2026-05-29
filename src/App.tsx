@@ -79,6 +79,7 @@ import { IntegrationsPage } from './components/IntegrationsPage';
 import { BacklinkNetworkDashboard } from './components/BacklinkNetworkDashboard';
 import AuthorityDashboard from './components/AuthorityDashboard';
 import DirectorySubmissionDashboard from './components/DirectorySubmissionDashboard';
+import SeoAuditTool from './components/SeoAuditTool';
 
 
 // Firebase Authentication and Relational Sync Client Integrations
@@ -111,7 +112,7 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(true);
 
   // Navigation & Core States
-  const [viewMode, setViewMode] = useState<'landing' | 'app' | 'pricing' | 'integrations'>('landing');
+  const [viewMode, setViewMode] = useState<'landing' | 'app' | 'pricing' | 'integrations' | 'seo-audit'>('landing');
   const [activeTab, setActiveTab] = useState<'dashboard' | 'projects' | 'keywords' | 'planner' | 'editor' | 'crawler' | 'settings' | 'brand' | 'backlinks' | 'authority' | 'directory'>('brand');
   const [keywordsSubTab, setKeywordsSubTab] = useState<'explore' | 'tracker' | 'ai-discovery'>('explore');
   
@@ -326,6 +327,16 @@ export default function App() {
     return (saved as 'free' | 'premium') || 'free';
   });
   const [isRedirectingToStripe, setIsRedirectingToStripe] = useState(false);
+
+  // Deep Link URI Router Listener for public SEO Audit
+  useEffect(() => {
+    const p = window.location.pathname;
+    const h = window.location.hash;
+    const s = new URLSearchParams(window.location.search);
+    if (p.includes('seo-audit') || h === '#seo-audit' || s.get('view') === 'seo-audit') {
+      setViewMode('seo-audit');
+    }
+  }, []);
 
   // Capture checkout redirects
   useEffect(() => {
@@ -1682,6 +1693,7 @@ export default function App() {
         onLaunchApp={() => setViewMode('app')}
         onPricingClick={() => setViewMode('pricing')}
         onIntegrationsClick={() => setViewMode('integrations')}
+        onSeoAuditClick={() => setViewMode('seo-audit')}
         projectsCount={projects.length}
       />
     );
@@ -1693,6 +1705,7 @@ export default function App() {
         onBackToLanding={() => setViewMode('landing')}
         onLaunchApp={() => setViewMode('app')}
         onIntegrationsClick={() => setViewMode('integrations')}
+        onSeoAuditClick={() => setViewMode('seo-audit')}
         projectsCount={projects.length}
       />
     );
@@ -1704,11 +1717,23 @@ export default function App() {
         onBackToLanding={() => setViewMode('landing')}
         onLaunchApp={() => setViewMode('app')}
         onPricingClick={() => setViewMode('pricing')}
+        onSeoAuditClick={() => setViewMode('seo-audit')}
         projectsCount={projects.length}
         activePlan={activePlan}
         onTabChange={(tab) => {
           setActiveTab(tab as any);
         }}
+      />
+    );
+  }
+
+  if (viewMode === 'seo-audit') {
+    return (
+      <SeoAuditTool 
+        onBackToLanding={() => setViewMode('landing')}
+        onPricingClick={() => setViewMode('pricing')}
+        onLaunchApp={() => setViewMode('app')}
+        projectsCount={projects.length}
       />
     );
   }

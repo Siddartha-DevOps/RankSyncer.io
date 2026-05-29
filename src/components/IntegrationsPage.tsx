@@ -28,6 +28,7 @@ interface IntegrationsPageProps {
   onBackToLanding: () => void;
   onLaunchApp: () => void;
   onPricingClick: () => void;
+  onSeoAuditClick?: () => void;
   projectsCount: number;
   activePlan: "free" | "premium";
   onTabChange?: (tab: string) => void;
@@ -53,6 +54,7 @@ export const IntegrationsPage: React.FC<IntegrationsPageProps> = ({
   onBackToLanding,
   onLaunchApp,
   onPricingClick,
+  onSeoAuditClick,
   projectsCount,
   activePlan,
   onTabChange
@@ -575,6 +577,12 @@ export const IntegrationsPage: React.FC<IntegrationsPageProps> = ({
             >
               Integrations
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-600" />
+            </button>
+            <button 
+              onClick={onSeoAuditClick} 
+              className="hover:text-[#4ade80] text-emerald-600 font-extrabold flex items-center gap-1 bg-emerald-500/10 px-2.5 py-1 rounded-lg transition-all cursor-pointer border border-emerald-500/20"
+            >
+              🔥 SEO Audit
             </button>
             <button onClick={onBackToLanding} className="hover:text-emerald-600 transition-colors cursor-pointer font-semibold text-slate-600">
               AI Playground
