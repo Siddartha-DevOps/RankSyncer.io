@@ -121,6 +121,177 @@ export default function AIContentPlanner({
   // Toggle form collapse
   const [showCreateForm, setShowCreateForm] = useState<boolean>(false);
 
+  // --- Article Plan & Quota Addon Upgrade state managers ---
+  const [quotaState, setQuotaState] = useState<any>(null);
+  const [addonPlans, setAddonPlans] = useState<any[]>([]);
+  const [quotaLoading, setQuotaLoading] = useState<boolean>(true);
+  const [showUpgradeModal, setShowUpgradeModal] = useState<boolean>(false);
+  const [selectedUpgradePlanId, setSelectedUpgradePlanId] = useState<string>("");
+  const [customQuotaCount, setCustomQuotaCount] = useState<number>(200); // custom tier tracking
+
+  // State for admin toggle inside the popover/modal
+  const [isAdminView, setIsAdminView] = useState<boolean>(false);
+  const [adminPlans, setAdminPlans] = useState<any[]>([]);
+  const [adminAnalytics, setAdminAnalytics] = useState<any>(null);
+  const [adminSaving, setAdminSaving] = useState<boolean>(false);
+  const [upgradeNotification, setUpgradeNotification] = useState<string | null>(null);
+
+  // States for admin manual tuning override
+  const [adminTargetUser, setAdminTargetUser] = useState<string>("demo-user");
+  const [adminOverrideUsedCount, setAdminOverrideUsedCount] = useState<number>(12);
+  const [adminOverrideTotalCount, setAdminOverrideTotalCount] = useState<number>(30);
+
+  // Fetch functions
+  const fetchQuotaState = async () => {
+    try {
+      const res = await fetch(`/api/article-quota/state?userId=demo-user`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) {
+          setQuotaState(data.quota);
+          setAdminOverrideUsedCount(data.quota.used_articles);
+          setAdminOverrideTotalCount(data.quota.upgraded_quota);
+        }
+      }
+    } catch (e) {
+      console.error("Error loaded quota state:", e);
+    }
+  };
+
+  const fetchAddonPlans = async () => {
+    try {
+      const res = await fetch(`/api/article-quota/plans`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) {
+          setAddonPlans(data.plans);
+          setAdminPlans(JSON.parse(JSON.stringify(data.plans)));
+        }
+      }
+    } catch (e) {
+      console.error("Error loaded addon tiers list:", e);
+    }
+  };
+
+  const fetchAdminAnalytics = async () => {
+    try {
+      const res = await fetch(`/api/article-quota/analytics`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) {
+          setAdminAnalytics(data.analytics);
+        }
+      }
+    } catch (e) {
+      console.error("Error loading quota metrics overview:", e);
+    }
+  };
+
+  // On mount
+  useEffect(() => {
+    setQuotaLoading(true);
+    Promise.all([fetchQuotaState(), fetchAddonPlans(), fetchAdminAnalytics()]).finally(() => {
+      setQuotaLoading(false);
+    });
+  }, []);
+
+  const handleUpgradePlan = async (targetPlanId: string) => {
+    try {
+      const res = await fetch("/api/article-quota/upgrade", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: "demo-user", targetPlanId })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setUpgradeNotification(data.message);
+        setQuotaState(data.quota);
+        fetchAdminAnalytics();
+        setTimeout(() => setUpgradeNotification(null), 8000);
+      } else {
+        alert(data.error || "Upgrade failed. Check Stripe / Payment Gateway logs.");
+      }
+    } catch (err: any) {
+      alert("Billing connection interrupted during upgrade workflow check: " + err.message);
+    }
+  };
+
+  const handleCustomUpgrade = async () => {
+    // Generate/register a dynamic custom tier
+    try {
+      const existingPlansWithoutCustom = adminPlans.filter(p => !p.id.startsWith("custom-"));
+      const calculatedCustomPrice = Math.round(customQuotaCount * 1.1); // $1.10 per custom item
+      const customPlan = {
+        id: `custom-tier-${customQuotaCount}`,
+        name: `Custom Premium (${customQuotaCount})`,
+        articlesPerMonth: customQuotaCount,
+        price: calculatedCustomPrice,
+        enabled: true
+      };
+      
+      const resUpdate = await fetch("/api/article-quota/plans", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ plans: [...existingPlansWithoutCustom, customPlan] })
+      });
+      
+      if (resUpdate.ok) {
+        await handleUpgradePlan(customPlan.id);
+        fetchAddonPlans(); // reload plans
+      } else {
+        alert("Failed registering custom tier pricing rules.");
+      }
+    } catch (err: any) {
+      alert("Error adding custom tier: " + err.message);
+    }
+  };
+
+  const handleSaveAdminPlans = async () => {
+    setAdminSaving(true);
+    try {
+      const res = await fetch("/api/article-quota/plans", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ plans: adminPlans })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setAddonPlans(data.plans);
+        alert("Pricing configurations saved successfully inside quota_db.");
+      } else {
+        alert(data.error || "Failed saving pricing.");
+      }
+    } catch (err: any) {
+      alert("Admin connection dropped: " + err.message);
+    } finally {
+      setAdminSaving(false);
+    }
+  };
+
+  const handleAdminOverride = async () => {
+    try {
+      const res = await fetch("/api/article-quota/admin/adjust-quota", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: adminTargetUser,
+          usedArticles: adminOverrideUsedCount,
+          upgradedQuota: adminOverrideTotalCount
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setQuotaState(data.quota);
+        fetchAdminAnalytics();
+        alert("Manual overrides applied successfully inside sandbox environment.");
+      } else {
+        alert(data.error || "Direct override failed.");
+      }
+    } catch (err: any) {
+      alert("Manual override connection problem: " + err.message);
+    }
+  };
+
   // Sync plan inputs when project updates
   useEffect(() => {
     if (project.domain) {
@@ -503,6 +674,19 @@ export default function AIContentPlanner({
     };
   }, [approvedItems]);
 
+  const percentageUsed = useMemo(() => {
+    if (!quotaState) return 0;
+    const total = quotaState.upgraded_quota || 1;
+    return Math.min(100, Math.round((quotaState.used_articles / total) * 100));
+  }, [quotaState]);
+
+  const customProratedCost = useMemo(() => {
+    const calculatedCustomPrice = Math.round(customQuotaCount * 1.1);
+    const priceDiff = calculatedCustomPrice - (quotaState ? quotaState.addon_price : 0);
+    if (priceDiff <= 0) return 0;
+    return parseFloat(((priceDiff * 18) / 30).toFixed(2));
+  }, [customQuotaCount, quotaState]);
+
   return (
     <div className="space-y-6">
       
@@ -511,7 +695,7 @@ export default function AIContentPlanner({
         <div className="absolute right-0 bottom-0 top-0 w-1/3 bg-radial from-slate-800 to-transparent opacity-40 pointer-events-none" />
         
         <div className="space-y-2 z-10">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center flex-wrap gap-2">
             <Sparkles className="h-5 w-5 text-amber-300 fill-amber-300 animate-pulse" />
             <span className="text-xs uppercase font-black bg-slate-800 border border-slate-700 text-slate-300 px-2.5 py-1 rounded-full tracking-wider">
               AI Content Engine
@@ -526,6 +710,19 @@ export default function AIContentPlanner({
                 className="text-[11px] font-black bg-gradient-to-r from-amber-500 to-orange-400 text-slate-950 px-2.5 py-1 rounded-full hover:shadow transition-all cursor-pointer flex items-center gap-0.5"
               >
                 <Zap className="h-3 w-3 fill-slate-950 text-slate-950 inline" /> Upgrade for 30-Day Plans
+              </button>
+            )}
+            
+            {quotaState && (
+              <button 
+                onClick={() => {
+                  fetchQuotaState();
+                  fetchAdminAnalytics();
+                  setShowUpgradeModal(true);
+                }}
+                className="text-[11px] font-black bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-550 hover:to-indigo-450 text-white px-3 py-1 rounded-full flex items-center gap-1 cursor-pointer transition-all active:scale-95 shadow-md shadow-indigo-600/25 border border-indigo-500 uppercase tracking-wide"
+              >
+                <Zap className="h-3 w-3 text-amber-300 fill-amber-300" /> Articles Plan: {quotaState.upgraded_quota}/month <span className="text-[10px] text-indigo-200">▼</span>
               </button>
             )}
           </div>
@@ -1192,6 +1389,507 @@ export default function AIContentPlanner({
         </div>
       )}
 
-    </div>
+  {/* ========================================================== */}
+  {/* OUTRANK-STYLE ARTICLE ADD-ON UPGRADE & BILLING MODAL OVERLAY */}
+  {/* ========================================================== */}
+  <AnimatePresence>
+    {showUpgradeModal && (
+      <motion.div 
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        className="fixed inset-0 bg-slate-950/70 backdrop-blur-md z-50 flex items-center justify-center p-4 overflow-y-auto"
+      >
+        <motion.div 
+          initial={{ scale: 0.95, y: 20 }}
+          animate={{ scale: 1, y: 0 }}
+          exit={{ scale: 0.95, y: 20 }}
+          className="bg-white rounded-3xl border border-slate-150 shadow-2xl w-full max-w-5xl max-h-[92vh] flex flex-col overflow-hidden text-slate-800"
+        >
+          {/* Header Region */}
+          <div className="bg-slate-900 text-white px-6 py-5 flex justify-between items-center relative overflow-hidden shrink-0">
+            <div className="absolute top-0 right-0 bottom-0 left-0 bg-radial from-indigo-900/50 via-transparent to-transparent pointer-events-none" />
+            <div className="z-10 space-y-1">
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-black tracking-wider uppercase bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 px-2 py-0.5 rounded">
+                  Instant Quotas Scaling
+                </span>
+                <span className="text-[10px] font-bold text-slate-300">Prorated Upgrade Engine</span>
+              </div>
+              <h3 className="text-xl font-black text-white tracking-tight flex items-center gap-2">
+                <Zap className="h-5 w-5 text-amber-300 fill-amber-300" />
+                RankSyncer Article Add-On Plans & Quotas
+              </h3>
+            </div>
+
+            <button 
+              onClick={() => setShowUpgradeModal(false)}
+              className="p-1.5 bg-slate-800/80 hover:bg-slate-700/80 hover:text-white rounded-full text-slate-400 cursor-pointer transition-all border border-slate-700/50 z-10"
+            >
+              <X className="h-4.5 w-4.5" />
+            </button>
+          </div>
+
+          {/* Success Notification Banner */}
+          {upgradeNotification && (
+            <div className="bg-emerald-50 border-y border-emerald-150 px-6 py-3 flex items-center gap-2 text-emerald-800 text-xs font-bold shrink-0 animate-fade-in">
+              <Check className="h-4 w-4 text-emerald-600 bg-emerald-100 p-0.5 rounded-full" />
+              <span>{upgradeNotification}</span>
+            </div>
+          )}
+
+          {/* View Mode Mode Toggler (Customer View vs Admin Dashboard View) */}
+          <div className="bg-slate-100 border-b border-slate-200 px-6 py-2 flex justify-between items-center shrink-0">
+            <div className="flex items-center gap-1.5 bg-slate-200/60 p-1 rounded-xl border border-slate-200">
+              <button
+                onClick={() => setIsAdminView(false)}
+                className={`text-xs font-extrabold px-3.5 py-1.5 rounded-lg cursor-pointer transition-all ${
+                  !isAdminView ? "bg-white text-indigo-700 shadow-3xs border border-indigo-100" : "text-slate-550 hover:text-slate-850"
+                }`}
+              >
+                💎 Customer Upgrades Marketplace
+              </button>
+              <button
+                onClick={() => {
+                  setIsAdminView(true);
+                  fetchAdminAnalytics();
+                }}
+                className={`text-xs font-extrabold px-3.5 py-1.5 rounded-lg cursor-pointer transition-all ${
+                  isAdminView ? "bg-white text-indigo-700 shadow-3xs border border-indigo-100" : "text-slate-550 hover:text-slate-850"
+                }`}
+              >
+                ⚙️ Admin Control Center
+              </button>
+            </div>
+            
+            <div className="text-[11px] text-slate-400 font-bold">
+              User Instance ID: <span className="font-mono text-slate-600">demo-user</span>
+            </div>
+          </div>
+
+          {/* Modal Main Contents Area */}
+          <div className="flex-1 overflow-y-auto p-6 space-y-6">
+            {!isAdminView ? (
+              // ==========================================
+              // CUSTOMER UPGRADES MARKETPLACE VIEW
+              // ==========================================
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+                
+                {/* Left side: Current status, details & progress tracker */}
+                <div className="lg:col-span-4 space-y-5">
+                  <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-4">
+                    <span className="text-[9px] uppercase font-black text-slate-450 tracking-wider block">Your License Utilization</span>
+                    
+                    {quotaLoading ? (
+                      <div className="text-xs text-slate-400 font-bold flex items-center gap-1.5 py-4">
+                        <RefreshCw className="h-3.5 w-3.5 animate-spin" /> Fetching quota balances...
+                      </div>
+                    ) : quotaState ? (
+                      <div className="space-y-4">
+                        <div className="flex items-baseline justify-between">
+                          <span className="text-4xl font-extrabold text-slate-900 tracking-tight">{quotaState.upgraded_quota - quotaState.used_articles}</span>
+                          <span className="text-slate-400 text-xs font-semibold">/ {quotaState.upgraded_quota} articles remaining</span>
+                        </div>
+
+                        {/* Progress Bar */}
+                        <div className="space-y-1.5">
+                          <div className="h-2 w-full bg-slate-200 rounded-full overflow-hidden">
+                            <div 
+                              className="h-full bg-gradient-to-r from-blue-600 to-indigo-600 rounded-full" 
+                              style={{ width: `${percentageUsed}%` }}
+                            />
+                          </div>
+                          <div className="flex justify-between text-[10px] text-slate-450 font-bold">
+                            <span>{quotaState.used_articles} generated</span>
+                            <span>{percentageUsed}% utilized</span>
+                          </div>
+                        </div>
+
+                        <div className="border-t border-slate-200 pt-3.5 space-y-2 text-xs">
+                          <div className="flex justify-between font-bold">
+                            <span className="text-slate-500">Base Quota tier:</span>
+                            <span className="text-slate-800">{quotaState.current_quota} / Month</span>
+                          </div>
+                          <div className="flex justify-between font-bold">
+                            <span className="text-slate-500">Add-On expansion:</span>
+                            <span className="text-indigo-600">+{quotaState.upgraded_quota - quotaState.current_quota} articles</span>
+                          </div>
+                          <div className="flex justify-between font-bold">
+                            <span className="text-slate-500">Monthly Add-on Rate:</span>
+                            <span className="text-slate-800 font-mono">${quotaState.addon_price} / month</span>
+                          </div>
+                          <div className="flex justify-between font-bold">
+                            <span className="text-slate-500">Last Upgrade:</span>
+                            <span className="text-slate-800">{quotaState.upgrade_date ? new Date(quotaState.upgrade_date).toLocaleDateString() : "N/A"}</span>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-xs text-rose-500 font-bold">Unable to load live telemetry state</div>
+                    )}
+                  </div>
+
+                  {/* Future-Proof Dynamic Custom Tier adjuster */}
+                  <div className="bg-indigo-50/60 border border-indigo-100 rounded-2xl p-5 space-y-4">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-1">
+                        <Sparkles className="h-3.5 w-3.5 text-indigo-600 animate-pulse" />
+                        <span className="text-xs font-black text-indigo-900 uppercase">Scale to Custom Tier</span>
+                      </div>
+                      <p className="text-[11px] text-indigo-750 font-medium">
+                        Need bulk agency capacity? Configure a customized quota tier dynamically. Volume savings are applied automatically.
+                      </p>
+                    </div>
+
+                    <div className="space-y-3.5">
+                      <div className="flex justify-between text-xs font-bold text-indigo-950">
+                        <span>Target Quota Size:</span>
+                        <span className="font-mono bg-white px-2 py-0.5 rounded border border-indigo-150">{customQuotaCount} Articles</span>
+                      </div>
+                      
+                      <input 
+                        type="range" 
+                        min="160" 
+                        max="1000" 
+                        step="10"
+                        value={customQuotaCount}
+                        onChange={(e) => setCustomQuotaCount(Number(e.target.value))}
+                        className="w-full h-1.5 bg-indigo-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+                      />
+                      
+                      <div className="p-3 bg-white border border-indigo-100 rounded-xl space-y-2 text-xs">
+                        <div className="flex justify-between font-bold text-slate-650">
+                          <span>Custom monthly rate:</span>
+                          <span className="font-mono text-indigo-900">${Math.round(customQuotaCount * 1.1)}/mo</span>
+                        </div>
+                        <div className="flex justify-between font-bold text-slate-650">
+                          <span>Prorated cost today:</span>
+                          <span className="font-mono text-emerald-600">${customProratedCost}</span>
+                        </div>
+                      </div>
+
+                      <button
+                        onClick={handleCustomUpgrade}
+                        className="w-full py-2 bg-indigo-600 hover:bg-slate-900 text-white text-xs font-black rounded-xl transition-all cursor-pointer shadow-sm uppercase tracking-wider"
+                      >
+                        Activate Custom Tier Instantly
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Right side: Tiers Selector Cards List */}
+                <div className="lg:col-span-8 space-y-4">
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs font-extrabold text-slate-500 uppercase tracking-wide">Available Monthly Upgrades Options</span>
+                    <span className="text-[10px] uppercase font-black text-emerald-600 bg-emerald-50 border border-emerald-100 px-2 py-0.5 rounded">
+                      ⚡ 100% mid-cycle proration applied
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {addonPlans.filter(p => p.price > 0).map((plan) => {
+                      const isActive = quotaState && quotaState.upgraded_quota === plan.articlesPerMonth;
+                      const priceDiff = plan.price - (quotaState ? quotaState.addon_price : 0);
+                      const isUpgrade = priceDiff > 0;
+                      
+                      // Calculate the prorated billing adjustment amount applied today
+                      // (target price - current price) * (18 days left / 30 total cycle days)
+                      const proratedChargeToday = isUpgrade ? Math.round((priceDiff * 18 * 100) / 30) / 100 : 0;
+                      const avgDailyArticles = Math.round(plan.articlesPerMonth / 30);
+                      
+                      return (
+                        <div 
+                          key={plan.id}
+                          className={`rounded-2xl border p-4.5 flex flex-col justify-between space-y-4 transition-all relative overflow-hidden ${
+                            isActive 
+                              ? "border-indigo-500 bg-indigo-50/20 shadow-md ring-2 ring-indigo-500/20" 
+                              : "border-slate-200 bg-white hover:border-slate-350 hover:shadow-2xs"
+                          }`}
+                        >
+                          {isActive && (
+                            <div className="absolute top-0 right-0 bg-indigo-600 text-white font-black text-[9px] uppercase px-2.5 py-1 rounded-bl">
+                              Active Tier
+                            </div>
+                          )}
+
+                          <div className="space-y-1.5">
+                            <h4 className="text-sm font-black text-slate-905">{plan.name}</h4>
+                            <div className="flex items-baseline gap-1">
+                              <span className="text-3xl font-black text-slate-950">{plan.articlesPerMonth}</span>
+                              <span className="text-slate-405 font-bold text-xs">Articles / mo</span>
+                            </div>
+                            <p className="text-[10px] text-slate-500 font-semibold leading-relaxed">
+                              Expands active planner target to <span className="font-black text-slate-800">~{avgDailyArticles} articles per day</span>, maximizing topical cluster indexing speed.
+                            </p>
+                          </div>
+
+                          <div className="border-t border-slate-100 pt-3.5 space-y-2 text-xs">
+                            <div className="flex justify-between font-bold">
+                              <span className="text-slate-500">Monthly rate:</span>
+                              <span className="text-slate-800 font-mono">${plan.price}/mo</span>
+                            </div>
+                            {isUpgrade && (
+                              <div className="flex justify-between font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded border border-emerald-100/45 text-[11px]">
+                                <span>Prorated adjustment:</span>
+                                <span className="font-mono font-extrabold">${proratedChargeToday} Today</span>
+                              </div>
+                            )}
+                            {!isUpgrade && !isActive && (
+                              <div className="text-[10px] text-slate-450 font-bold text-center">
+                                Downgrade pricing of ${plan.price}/mo takes effect at cycle rollover
+                              </div>
+                            )}
+                          </div>
+
+                          <button
+                            onClick={() => handleUpgradePlan(plan.id)}
+                            disabled={isActive}
+                            className={`w-full py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                              isActive 
+                                ? "bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200" 
+                                : isUpgrade 
+                                  ? "bg-slate-900 hover:bg-slate-800 text-white text-shadow hover:shadow-md" 
+                                  : "bg-slate-150 hover:bg-slate-200 text-slate-700"
+                            }`}
+                          >
+                            {isActive ? "Currently Subscribed" : isUpgrade ? "Scale Instantly" : "Downgrade Plan"}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Savings / Rollover Info Disclaimer Box */}
+                  <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200 flex items-start gap-3">
+                    <HelpCircle className="h-4.5 w-4.5 text-slate-400 shrink-0 mt-0.5" />
+                    <div className="space-y-1.5 text-xs text-slate-550 leading-relaxed font-semibold">
+                      <p className="font-extrabold text-slate-820 leading-none">Quota Rollover & Billing Protocol Details</p>
+                      <p>
+                        • Quota resets on your monthly subscription renewal date. Additional add-on capacities are provisioned instantly inside Content Planner without touching your seat subscriptions.
+                      </p>
+                      <p>
+                        • Downgrades allow remaining items to persist until the current billing cycle completes. Refund or rollover credits are kept as RankSyncer wallet reserves.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+            ) : (
+              // ==========================================
+              // ADMIN CONTROL CENTER VIEW
+              // ==========================================
+              <div className="space-y-6">
+                
+                {/* Analytics metrics cards summary row */}
+                {adminAnalytics ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+                    <div className="bg-slate-900 text-white rounded-2xl p-4 space-y-1 border border-slate-800">
+                      <span className="text-[9px] uppercase tracking-wider font-extrabold text-slate-400 block">Total Revenue (Addon Base)</span>
+                      <div className="text-2xl font-black text-emerald-400">${adminAnalytics.totalRevenue}</div>
+                      <p className="text-[10px] text-slate-450 font-medium">Calculated from dynamic upgrade proration hooks</p>
+                    </div>
+                    
+                    <div className="bg-white text-slate-900 rounded-2xl p-4 space-y-1 border border-slate-200 shadow-3xs">
+                      <span className="text-[9px] uppercase tracking-wider font-extrabold text-slate-500 block">Upgrade Events Executed</span>
+                      <div className="text-2xl font-black text-indigo-600">{adminAnalytics.totalUpgradesCount} Upgrades</div>
+                      <p className="text-[10px] text-slate-450 font-medium">Tracking lifecycle callbacks successfully</p>
+                    </div>
+
+                    <div className="bg-white text-slate-900 rounded-2xl p-4 space-y-1 border border-slate-200 shadow-3xs">
+                      <span className="text-[9px] uppercase tracking-wider font-extrabold text-slate-500 block">Avg Quota Utilization</span>
+                      <div className="text-2xl font-black text-amber-500">{adminAnalytics.avgUtilization}%</div>
+                      <p className="text-[10px] text-slate-450 font-medium">Overall ratio of generated vs allocated</p>
+                    </div>
+
+                    <div className="bg-white text-slate-900 rounded-2xl p-4 space-y-1 border border-slate-200 shadow-3xs">
+                      <span className="text-[9px] uppercase tracking-wider font-extrabold text-slate-500 block">Tiers Descriptors</span>
+                      <div className="text-xs font-extrabold space-y-0.5 pt-1">
+                        {Object.entries(adminAnalytics.popularity).map(([name, count]: any) => (
+                          <div key={name} className="flex justify-between">
+                            <span className="text-slate-500 truncate mr-1">{name}:</span>
+                            <span className="text-slate-800 font-bold font-mono">{count} accounts</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-xs text-slate-405 font-bold">Metrics loader running...</div>
+                )}
+
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                  
+                  {/* Left Column: Tiers Admin Pricing adjusters */}
+                  <div className="lg:col-span-7 bg-white rounded-2xl border border-slate-150 p-5 space-y-4 shadow-3xs">
+                    <div className="flex justify-between items-center border-b border-slate-100 pb-3">
+                      <div>
+                        <h4 className="text-xs uppercase font-black text-slate-900">Configure Tier Quotas & Pricing</h4>
+                        <p className="text-[10px] text-slate-450 font-bold mt-0.5">Adjust client pricing definitions synced inside database</p>
+                      </div>
+                      <button
+                        onClick={handleSaveAdminPlans}
+                        disabled={adminSaving}
+                        className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-750 text-white rounded-lg text-[10px] font-black cursor-pointer transition-all disabled:opacity-50"
+                      >
+                        {adminSaving ? "Saving..." : "Save Pricing Matrix"}
+                      </button>
+                    </div>
+
+                    <div className="space-y-3.5 max-h-[350px] overflow-y-auto pr-1">
+                      {adminPlans.map((plan, index) => (
+                        <div key={plan.id} className="p-3.5 bg-slate-50 rounded-xl border border-slate-200/60 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                          <div className="space-y-1">
+                            <span className="text-[9px] uppercase tracking-wider font-bold text-slate-450 block font-mono">Plan ID: {plan.id}</span>
+                            <input 
+                              type="text" 
+                              value={plan.name}
+                              onChange={(e) => {
+                                const copy = [...adminPlans];
+                                copy[index].name = e.target.value;
+                                setAdminPlans(copy);
+                              }}
+                              className="bg-white border border-slate-200 rounded px-2 py-0.5 text-xs font-black text-slate-850"
+                            />
+                          </div>
+
+                          <div className="flex gap-3">
+                            <div className="space-y-0.5">
+                              <label className="text-[9px] font-black uppercase text-slate-400 block">Quota (Monthly)</label>
+                              <input 
+                                type="number" 
+                                value={plan.articlesPerMonth}
+                                onChange={(e) => {
+                                  const copy = [...adminPlans];
+                                  copy[index].articlesPerMonth = Number(e.target.value);
+                                  setAdminPlans(copy);
+                                }}
+                                className="bg-white border border-slate-205 rounded px-2 py-1 text-xs font-bold w-18 text-center"
+                              />
+                            </div>
+
+                            <div className="space-y-0.5">
+                              <label className="text-[9px] font-black uppercase text-slate-400 block">Price (USD)</label>
+                              <input 
+                                type="number" 
+                                value={plan.price}
+                                onChange={(e) => {
+                                  const copy = [...adminPlans];
+                                  copy[index].price = Number(e.target.value);
+                                  setAdminPlans(copy);
+                                }}
+                                className="bg-white border border-slate-205 rounded px-2 py-1 text-xs font-mono font-bold w-18 text-center"
+                              />
+                            </div>
+
+                            <div className="space-y-0.5 flex flex-col items-center">
+                              <label className="text-[9px] font-black uppercase text-slate-400 block">Status</label>
+                              <input 
+                                type="checkbox"
+                                checked={plan.enabled}
+                                onChange={(e) => {
+                                  const copy = [...adminPlans];
+                                  copy[index].enabled = e.target.checked;
+                                  setAdminPlans(copy);
+                                }}
+                                className="h-4.5 w-4.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-550 mt-1 cursor-pointer"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Right Column: Sandbox overrides & upgrades live history tracking */}
+                  <div className="lg:col-span-5 space-y-4">
+                    {/* Sandbox Direct Manual Override */}
+                    <div className="bg-white rounded-2xl border border-slate-150 p-5 space-y-3.5 shadow-3xs">
+                      <div>
+                        <h4 className="text-xs uppercase font-black text-slate-900 border-b border-slate-100 pb-2">Sandbox Manual Overrides</h4>
+                        <p className="text-[10px] text-slate-450 font-semibold mt-1">Directly patch limits or reset user state variables for testing</p>
+                      </div>
+
+                      <div className="space-y-3">
+                        <div className="grid grid-cols-2 gap-3 text-xs">
+                          <div className="space-y-1">
+                            <label className="font-extrabold text-slate-500 block">Used Articles</label>
+                            <input 
+                              type="number"
+                              value={adminOverrideUsedCount}
+                              onChange={(e) => setAdminOverrideUsedCount(Number(e.target.value))}
+                              className="w-full bg-slate-50 border border-slate-200 rounded px-2.5 py-1.5 font-bold"
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                            <label className="font-extrabold text-slate-500 block">Allocated Quota</label>
+                            <input 
+                              type="number"
+                              value={adminOverrideTotalCount}
+                              onChange={(e) => setAdminOverrideTotalCount(Number(e.target.value))}
+                              className="w-full bg-slate-50 border border-slate-200 rounded px-2.5 py-1.5 font-bold"
+                            />
+                          </div>
+                        </div>
+
+                        <button
+                          onClick={handleAdminOverride}
+                          className="w-full py-2 bg-indigo-600 hover:bg-indigo-755 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer"
+                        >
+                          Push Limit Override Live
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Upgrades Live Audit history tracker */}
+                    <div className="bg-white rounded-2xl border border-slate-150 p-5 space-y-3 shadow-3xs max-h-[220px] overflow-y-auto">
+                      <h4 className="text-xs uppercase font-black text-indigo-950 border-b border-slate-100 pb-1.5">Upgrades Audit Feed</h4>
+                      {adminAnalytics && adminAnalytics.recentUpgrades && adminAnalytics.recentUpgrades.length > 0 ? (
+                        <div className="space-y-2.5">
+                          {adminAnalytics.recentUpgrades.map((log: any) => (
+                            <div key={log.id} className="text-[10px] font-semibold border-b border-slate-50 pb-2 space-y-1">
+                              <div className="flex justify-between text-slate-400">
+                                <span>ID: {log.id}</span>
+                                <span>{new Date(log.upgrade_date).toLocaleTimeString()}</span>
+                              </div>
+                              <p className="font-bold text-slate-800">
+                                User upgraded form <span className="text-rose-500">{log.current_quota}</span> to <span className="text-teal-600 font-extrabold">{log.upgraded_quota} items</span>
+                              </p>
+                              <div className="flex justify-between">
+                                <span className="text-slate-450 uppercase text-[9px] font-mono">Proration Adjust: <strong>${log.prorated_adjustment}</strong></span>
+                                <span className="text-emerald-600 font-black">Passed</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-[10px] text-slate-400 font-bold text-center py-4">No recent upgrades logged</p>
+                      )}
+                    </div>
+
+                  </div>
+
+                </div>
+
+              </div>
+            )}
+          </div>
+
+          {/* Footer status line wrapper */}
+          <div className="bg-slate-50 border-t border-slate-200 px-6 py-4 flex flex-col sm:flex-row justify-between items-center text-xs text-slate-450 font-bold shrink-0">
+            <span>RankSyncer Real-Time Subscription Gateway</span>
+            <div className="flex gap-4">
+              <span>Automatic mid-month proration active (Calculated on 30-day boundaries)</span>
+              <span>• Status: Live Gateway</span>
+            </div>
+          </div>
+
+        </motion.div>
+      </motion.div>
+    )}
+  </AnimatePresence>
+</div>
   );
 }

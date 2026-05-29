@@ -1,0 +1,57 @@
+{
+  "addon_plans": [
+    { "id": "tier-30", "name": "Basic Starter", "articlesPerMonth": 30, "price": 0, "enabled": true },
+    { "id": "tier-60", "name": "Growth Booster", "articlesPerMonth": 60, "price": 49, "enabled": true },
+    { "id": "tier-90", "name": "Pro Surge", "articlesPerMonth": 90, "price": 89, "enabled": true },
+    { "id": "tier-120", "name": "Agency Elite", "articlesPerMonth": 120, "price": 129, "enabled": true },
+    { "id": "tier-150", "name": "Enterprise Scale", "articlesPerMonth": 150, "price": 159, "enabled": true }
+  ],
+  "user_quotas": {
+    "demo-user": {
+      "user_id": "demo-user",
+      "subscription_id": "sub_premium_demo_384",
+      "current_quota": 30,
+      "upgraded_quota": 30,
+      "addon_price": 0,
+      "billing_cycle": "monthly",
+      "upgrade_date": null,
+      "status": "active",
+      "used_articles": 12,
+      "remaining_articles": 18
+    }
+  },
+  "plan_upgrades": [
+    {
+      "id": "up-001",
+      "user_id": "demo-user",
+      "subscription_id": "sub_premium_demo_384",
+      "current_quota": 30,
+      "upgraded_quota": 30,
+      "addon_price": 0,
+      "billing_cycle": "monthly",
+      "upgrade_date": "2026-05-10T10:00:00.000Z",
+      "status": "active"
+    }
+  ],
+  "quota_history": [
+    {
+      "id": "qh-001",
+      "user_id": "demo-user",
+      "action": "initialize",
+      "previous_quota": 30,
+      "new_quota": 30,
+      "timestamp": "2026-05-10T10:00:00.000Z"
+    }
+  ],
+  "billing_adjustments": [
+    {
+      "id": "ba-001",
+      "user_id": "demo-user",
+      "subscription_id": "sub_premium_demo_384",
+      "addon_price": 0,
+      "prorated_adjustment": 0,
+      "status": "completed",
+      "applied_at": "2026-05-10T10:00:00.000Z"
+    }
+  ]
+}

@@ -1500,10 +1500,36 @@ app.post("/api/cms/publish", async (req, res) => {
 // Fully Functional AI Engine Content Generator
 // ==========================================
 app.post("/api/generate", async (req, res) => {
-  const { keyword, competitorStructure, semanticKeywords, wordCount, tone, projectId } = req.body;
+  const { keyword, competitorStructure, semanticKeywords, wordCount, tone, projectId, userId = "demo-user" } = req.body;
 
   if (!keyword) {
     return res.status(400).json({ error: "Missing required 'keyword' parameter." });
+  }
+
+  // Real-time article quota enforcement check
+  const quotaDb = readArticleQuotaDb();
+  if (!quotaDb.user_quotas[userId]) {
+    quotaDb.user_quotas[userId] = {
+      user_id: userId,
+      subscription_id: `sub_premium_${userId}_${Math.floor(Math.random() * 900 + 100)}`,
+      current_quota: 30,
+      upgraded_quota: 30,
+      addon_price: 0,
+      billing_cycle: "monthly",
+      upgrade_date: null,
+      status: "active",
+      used_articles: 12,
+      remaining_articles: 18
+    };
+    writeArticleQuotaDb(quotaDb);
+  }
+
+  const userQ = quotaDb.user_quotas[userId];
+  if (userQ.remaining_articles <= 0) {
+    return res.status(403).json({ 
+      success: false, 
+      error: `Your monthly article generation quota of ${userQ.upgraded_quota} articles was exhausted! Please purchase an Add-On upgrade plan in the Content Planner to increase capacity instantly.` 
+    });
   }
 
   const ai = getGeminiClient();
@@ -1677,6 +1703,19 @@ Ensure the output is valid JSON. Return ONLY the JSON object. Do not wrap it in 
       } catch (logErr) {
         console.warn("Failed recording style alignment logging stream:", logErr);
       }
+    }
+
+    // Deduct one article from monthly quota balances
+    try {
+      const liveQuotaDb = readArticleQuotaDb();
+      if (liveQuotaDb.user_quotas[userId]) {
+        liveQuotaDb.user_quotas[userId].used_articles += 1;
+        liveQuotaDb.user_quotas[userId].remaining_articles = Math.max(0, liveQuotaDb.user_quotas[userId].upgraded_quota - liveQuotaDb.user_quotas[userId].used_articles);
+        writeArticleQuotaDb(liveQuotaDb);
+        console.log(`[QUOTA METRICS]: Deducted 1 article. User '${userId}' remaining: ${liveQuotaDb.user_quotas[userId].remaining_articles}`);
+      }
+    } catch (quotaDeductErr) {
+      console.warn("Could not deduct quota balance:", quotaDeductErr);
     }
 
     return res.json({
@@ -2290,6 +2329,352 @@ app.get("/api/billing/analytics", (req, res) => {
     });
   } catch (err: any) {
     return res.status(500).json({ error: err.message || "Failed to compute billing analytics" });
+  }
+});
+
+// ==========================================
+// Article Add-On Plans & Quota Upgrade System
+// ==========================================
+const articleQuotaDbPath = path.join(process.cwd(), "article_quota_db.json");
+
+interface AddonPlan {
+  id: string;
+  name: string;
+  articlesPerMonth: number;
+  price: number;
+  enabled: boolean;
+}
+
+interface UserQuota {
+  user_id: string;
+  subscription_id: string;
+  current_quota: number;
+  upgraded_quota: number;
+  addon_price: number;
+  billing_cycle: "monthly" | "annual";
+  upgrade_date: string | null;
+  status: "active" | "cancelled" | "paused";
+  used_articles: number;
+  remaining_articles: number;
+}
+
+interface PlanUpgradeLog {
+  id: string;
+  user_id: string;
+  subscription_id: string;
+  current_quota: number;
+  upgraded_quota: number;
+  addon_price: number;
+  prorated_adjustment: number;
+  upgrade_date: string;
+  status: string;
+}
+
+interface QuotaHistory {
+  id: string;
+  user_id: string;
+  action: string;
+  previous_quota: number;
+  new_quota: number;
+  timestamp: string;
+}
+
+interface BillingAdjustmentLog {
+  id: string;
+  user_id: string;
+  subscription_id: string;
+  addon_price: number;
+  prorated_adjustment: number;
+  status: "completed" | "failed";
+  applied_at: string;
+}
+
+interface ArticleQuotaDb {
+  addon_plans: AddonPlan[];
+  user_quotas: Record<string, UserQuota>;
+  plan_upgrades: PlanUpgradeLog[];
+  quota_history: QuotaHistory[];
+  billing_adjustments: BillingAdjustmentLog[];
+}
+
+function readArticleQuotaDb(): ArticleQuotaDb {
+  try {
+    if (fs.existsSync(articleQuotaDbPath)) {
+      return JSON.parse(fs.readFileSync(articleQuotaDbPath, "utf8"));
+    }
+  } catch (err) {
+    console.error("[QUOTA DB]: Error reading article_quota_db.json:", err);
+  }
+  return {
+    addon_plans: [
+      { id: "tier-30", name: "Basic Starter", articlesPerMonth: 30, price: 0, enabled: true },
+      { id: "tier-60", name: "Growth Booster", articlesPerMonth: 60, price: 49, enabled: true },
+      { id: "tier-90", name: "Pro Surge", articlesPerMonth: 90, price: 89, enabled: true },
+      { id: "tier-120", name: "Agency Elite", articlesPerMonth: 120, price: 129, enabled: true },
+      { id: "tier-150", name: "Enterprise Scale", articlesPerMonth: 150, price: 159, enabled: true }
+    ],
+    user_quotas: {},
+    plan_upgrades: [],
+    quota_history: [],
+    billing_adjustments: []
+  };
+}
+
+function writeArticleQuotaDb(data: ArticleQuotaDb) {
+  try {
+    fs.writeFileSync(articleQuotaDbPath, JSON.stringify(data, null, 2), "utf8");
+  } catch (err) {
+    console.error("[QUOTA DB]: Error writing to article_quota_db.json:", err);
+  }
+}
+
+// 1. Get Addon Plans
+app.get("/api/article-quota/plans", (req, res) => {
+  try {
+    const db = readArticleQuotaDb();
+    return res.json({ success: true, plans: db.addon_plans });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || "Failed to load quota plans" });
+  }
+});
+
+// 2. Admin adjusts and manages addon plans
+app.post("/api/article-quota/plans", (req, res) => {
+  try {
+    const { plans } = req.body;
+    if (!Array.isArray(plans)) {
+      return res.status(400).json({ error: "Invalid body schema. 'plans' must be an array." });
+    }
+    const db = readArticleQuotaDb();
+    db.addon_plans = plans;
+    writeArticleQuotaDb(db);
+    return res.json({ success: true, message: "Addon plans updated successfully", plans: db.addon_plans });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || "Failed to update quota plans" });
+  }
+});
+
+// 3. User quota state check with active default population
+app.get("/api/article-quota/state", (req, res) => {
+  try {
+    const userId = (req.query.userId as string) || "demo-user";
+    const db = readArticleQuotaDb();
+    
+    // Lazy initialize user if missing
+    if (!db.user_quotas[userId]) {
+      db.user_quotas[userId] = {
+        user_id: userId,
+        subscription_id: `sub_premium_${userId}_${Math.floor(Math.random() * 900 + 100)}`,
+        current_quota: 30,
+        upgraded_quota: 30,
+        addon_price: 0,
+        billing_cycle: "monthly",
+        upgrade_date: null,
+        status: "active",
+        used_articles: 12,
+        remaining_articles: 18
+      };
+      writeArticleQuotaDb(db);
+    }
+    
+    const userQuota = db.user_quotas[userId];
+    const userUpgrades = db.plan_upgrades.filter(u => u.user_id === userId);
+    const userAdjustments = db.billing_adjustments.filter(a => a.user_id === userId);
+    const userHistory = db.quota_history.filter(h => h.user_id === userId);
+    
+    return res.json({
+      success: true,
+      quota: userQuota,
+      upgrades: userUpgrades,
+      adjustments: userAdjustments,
+      history: userHistory
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || "Failed to get user quota state" });
+  }
+});
+
+// 4. Upgrade workflow with proration, adjustment logs and telemetry history
+app.post("/api/article-quota/upgrade", (req, res) => {
+  try {
+    const { userId = "demo-user", targetPlanId } = req.body;
+    if (!targetPlanId) {
+      return res.status(400).json({ error: "Missing required field 'targetPlanId'" });
+    }
+    
+    const db = readArticleQuotaDb();
+    const plan = db.addon_plans.find(p => p.id === targetPlanId);
+    if (!plan) {
+      return res.status(404).json({ error: `Selected plan '${targetPlanId}' was not found.` });
+    }
+    
+    // Lazy initialize user if missing
+    if (!db.user_quotas[userId]) {
+      db.user_quotas[userId] = {
+        user_id: userId,
+        subscription_id: `sub_premium_${userId}_${Math.floor(Math.random() * 900 + 100)}`,
+        current_quota: 30,
+        upgraded_quota: 30,
+        addon_price: 0,
+        billing_cycle: "monthly",
+        upgrade_date: null,
+        status: "active",
+        used_articles: 12,
+        remaining_articles: 18
+      };
+    }
+    
+    const userQuota = db.user_quotas[userId];
+    const previousQuota = userQuota.upgraded_quota;
+    const targetQuota = plan.articlesPerMonth;
+    const previousAddonPrice = userQuota.addon_price;
+    const newAddonPrice = plan.price;
+    
+    // MID-CYCLE PRORATED BILLING LOGIC
+    // Say there are 18 days left in a 30-day billing cycle
+    const totalCycleDays = 30;
+    const remainingDaysInCycle = 18;
+    const rawPriceDifference = newAddonPrice - previousAddonPrice;
+    
+    // Calculate proration
+    let proratedFee = rawPriceDifference;
+    if (rawPriceDifference > 0) {
+      proratedFee = parseFloat(((rawPriceDifference * remainingDaysInCycle) / totalCycleDays).toFixed(2));
+    } else {
+      proratedFee = 0; // Downgrades or non-charging operations are protected
+    }
+    
+    const appliedTime = new Date().toISOString();
+    
+    // Update quota limits right away
+    userQuota.upgraded_quota = targetQuota;
+    userQuota.addon_price = newAddonPrice;
+    userQuota.upgrade_date = appliedTime;
+    userQuota.remaining_articles = Math.max(0, targetQuota - userQuota.used_articles);
+    
+    // Audit / Telemetry / Billing logs insertions
+    const upgradeId = `up-lvl-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    const upgradeLog: PlanUpgradeLog = {
+      id: upgradeId,
+      user_id: userId,
+      subscription_id: userQuota.subscription_id,
+      current_quota: previousQuota,
+      upgraded_quota: targetQuota,
+      addon_price: newAddonPrice,
+      prorated_adjustment: proratedFee,
+      upgrade_date: appliedTime,
+      status: "completed"
+    };
+    db.plan_upgrades.push(upgradeLog);
+    
+    const historyId = `qh-mod-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    const historyLog: QuotaHistory = {
+      id: historyId,
+      user_id: userId,
+      action: previousQuota < targetQuota ? "upgrade" : "downgrade",
+      previous_quota: previousQuota,
+      new_quota: targetQuota,
+      timestamp: appliedTime
+    };
+    db.quota_history.push(historyLog);
+    
+    if (proratedFee > 0) {
+      const adjustmentId = `ba-mod-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+      const adjLog: BillingAdjustmentLog = {
+        id: adjustmentId,
+        user_id: userId,
+        subscription_id: userQuota.subscription_id,
+        addon_price: newAddonPrice,
+        prorated_adjustment: proratedFee,
+        status: "completed",
+        applied_at: appliedTime
+      };
+      db.billing_adjustments.push(adjLog);
+    }
+    
+    writeArticleQuotaDb(db);
+    return res.json({
+      success: true,
+      message: `Prorated billing of $${proratedFee.toFixed(2)} applied and quota boosted to ${targetQuota} items instantly!`,
+      quota: userQuota,
+      proration: {
+        proratedFee,
+        daysRemaining: remainingDaysInCycle,
+        rawDifference: rawPriceDifference
+      }
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || "Failed to finalize upgrade process" });
+  }
+});
+
+// 5. Macro Analytics Dashboard insights
+app.get("/api/article-quota/analytics", (req, res) => {
+  try {
+    const db = readArticleQuotaDb();
+    
+    // Summarize upgrade counters
+    const totalUpgradesCount = db.plan_upgrades.length;
+    const totalRevenue = db.plan_upgrades.reduce((acc, curr) => acc + curr.prorated_adjustment, 0);
+    
+    // Count plan popularity
+    const popularity: Record<string, number> = {};
+    db.addon_plans.forEach(plan => {
+      popularity[plan.name] = 0;
+    });
+    
+    Object.values(db.user_quotas).forEach(q => {
+      const match = db.addon_plans.find(p => p.articlesPerMonth === q.upgraded_quota);
+      if (match) {
+        popularity[match.name] = (popularity[match.name] || 0) + 1;
+      }
+    });
+    
+    // Average used vs average upgraded total
+    const users = Object.values(db.user_quotas);
+    const sumUsed = users.reduce((acc, curr) => acc + curr.used_articles, 0);
+    const sumTotal = users.reduce((acc, curr) => acc + curr.upgraded_quota, 0);
+    const avgUtilization = sumTotal > 0 ? parseFloat(((sumUsed / sumTotal) * 100).toFixed(1)) : 0;
+    
+    return res.json({
+      success: true,
+      analytics: {
+        totalUpgradesCount,
+        totalRevenue: parseFloat(totalRevenue.toFixed(2)),
+        popularity,
+        avgUtilization,
+        recentUpgrades: db.plan_upgrades.slice(-10).reverse(),
+        recentAdjustments: db.billing_adjustments.slice(-10).reverse()
+      }
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || "Failed to load analytics metrics" });
+  }
+});
+
+// 6. Direct quota values manual adjustment for testing/tuning
+app.post("/api/article-quota/admin/adjust-quota", (req, res) => {
+  try {
+    const { userId = "demo-user", usedArticles, upgradedQuota } = req.body;
+    const db = readArticleQuotaDb();
+    
+    if (!db.user_quotas[userId]) {
+      return res.status(404).json({ error: "User quota state not tracked yet" });
+    }
+    
+    const quota = db.user_quotas[userId];
+    if (typeof usedArticles === 'number') {
+      quota.used_articles = usedArticles;
+    }
+    if (typeof upgradedQuota === 'number') {
+      quota.upgraded_quota = upgradedQuota;
+    }
+    quota.remaining_articles = Math.max(0, quota.upgraded_quota - quota.used_articles);
+    
+    writeArticleQuotaDb(db);
+    return res.json({ success: true, message: "User quota limits modified", quota });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || "Failed modifying custom quota state" });
   }
 });
 
