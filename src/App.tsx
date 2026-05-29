@@ -32,7 +32,9 @@ import {
   CreditCard,
   Link2,
   Share2,
-  Radio
+  Radio,
+  Wrench,
+  Bot
 } from 'lucide-react';
 
 import { Project, Keyword, Article, CrawlerLog, AutopilotQueueItem } from './types';
@@ -116,7 +118,7 @@ export default function App() {
 
   // Navigation & Core States
   const [viewMode, setViewMode] = useState<'landing' | 'app' | 'pricing' | 'integrations' | 'seo-audit' | 'free-tools' | 'tool-builder'>('landing');
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'projects' | 'keywords' | 'planner' | 'editor' | 'crawler' | 'settings' | 'brand' | 'backlinks' | 'authority' | 'directory'>('brand');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'projects' | 'keywords' | 'planner' | 'editor' | 'crawler' | 'settings' | 'brand' | 'backlinks' | 'authority' | 'directory' | 'seo-audit' | 'free-tools' | 'tool-builder'>('brand');
   const [keywordsSubTab, setKeywordsSubTab] = useState<'explore' | 'tracker' | 'ai-discovery'>('explore');
   
   // AI Keyword Discovery Sync States
@@ -337,11 +339,14 @@ export default function App() {
     const h = window.location.hash;
     const s = new URLSearchParams(window.location.search);
     if (p.includes('seo-audit') || h === '#seo-audit' || s.get('view') === 'seo-audit') {
-      setViewMode('seo-audit');
+      setViewMode('app');
+      setActiveTab('seo-audit');
     } else if (p.includes('tools') || h.includes('tools') || s.get('view') === 'free-tools' || s.get('view') === 'tools') {
-      setViewMode('free-tools');
+      setViewMode('app');
+      setActiveTab('free-tools');
     } else if (p.includes('tool-builder') || h.includes('tool-builder') || s.get('view') === 'tool-builder') {
-      setViewMode('tool-builder');
+      setViewMode('app');
+      setActiveTab('tool-builder');
     }
   }, []);
 
@@ -1700,9 +1705,18 @@ export default function App() {
         onLaunchApp={() => setViewMode('app')}
         onPricingClick={() => setViewMode('pricing')}
         onIntegrationsClick={() => setViewMode('integrations')}
-        onSeoAuditClick={() => setViewMode('seo-audit')}
-        onFreeToolsClick={() => setViewMode('free-tools')}
-        onToolBuilderClick={() => setViewMode('tool-builder')}
+        onSeoAuditClick={() => {
+          setViewMode('app');
+          setActiveTab('seo-audit');
+        }}
+        onFreeToolsClick={() => {
+          setViewMode('app');
+          setActiveTab('free-tools');
+        }}
+        onToolBuilderClick={() => {
+          setViewMode('app');
+          setActiveTab('tool-builder');
+        }}
         projectsCount={projects.length}
       />
     );
@@ -1714,7 +1728,10 @@ export default function App() {
         onBackToLanding={() => setViewMode('landing')}
         onLaunchApp={() => setViewMode('app')}
         onIntegrationsClick={() => setViewMode('integrations')}
-        onSeoAuditClick={() => setViewMode('seo-audit')}
+        onSeoAuditClick={() => {
+          setViewMode('app');
+          setActiveTab('seo-audit');
+        }}
         projectsCount={projects.length}
       />
     );
@@ -1726,7 +1743,10 @@ export default function App() {
         onBackToLanding={() => setViewMode('landing')}
         onLaunchApp={() => setViewMode('app')}
         onPricingClick={() => setViewMode('pricing')}
-        onSeoAuditClick={() => setViewMode('seo-audit')}
+        onSeoAuditClick={() => {
+          setViewMode('app');
+          setActiveTab('seo-audit');
+        }}
         projectsCount={projects.length}
         activePlan={activePlan}
         onTabChange={(tab) => {
@@ -1736,39 +1756,7 @@ export default function App() {
     );
   }
 
-  if (viewMode === 'seo-audit') {
-    return (
-      <SeoAuditTool 
-        onBackToLanding={() => setViewMode('landing')}
-        onPricingClick={() => setViewMode('pricing')}
-        onLaunchApp={() => setViewMode('app')}
-        projectsCount={projects.length}
-      />
-    );
-  }
 
-  if (viewMode === 'free-tools') {
-    return (
-      <FreeSeoTools 
-        onBackToLanding={() => setViewMode('landing')}
-        onPricingClick={() => setViewMode('pricing')}
-        onLaunchApp={() => setViewMode('app')}
-      />
-    );
-  }
-
-  if (viewMode === 'tool-builder') {
-    return (
-      <div className="min-h-screen bg-slate-950 p-6 sm:p-12 overflow-y-auto">
-        <AiToolsBuilder 
-          onBackToLanding={() => setViewMode('landing')}
-          projects={projects}
-          selectedProjectId={selectedProject?.id || 'p-1'}
-          activePlan={activePlan}
-        />
-      </div>
-    );
-  }
 
   return (
     <div 
@@ -1980,6 +1968,9 @@ export default function App() {
               { id: 'authority', label: 'Authority Tracking', icon: TrendingUp },
               { id: 'directory', label: 'Directory Submit', icon: Folder },
               { id: 'crawler', label: 'Simulated SERP Logs', icon: Terminal },
+              { id: 'seo-audit', label: 'Interactive SEO Audit', icon: SearchCode },
+              { id: 'free-tools', label: 'Free SEO Tools', icon: Wrench },
+              { id: 'tool-builder', label: 'AI Tools Builder', icon: Bot },
               { id: 'settings', label: 'CMS Connected Hub', icon: Settings },
               { id: 'brand', label: 'Brand & Assets', icon: BookOpen }
             ].map(tab => {
@@ -5380,6 +5371,47 @@ export default function App() {
               ) : (
                 <EnterpriseBrandVoiceSuite />
               )}
+            </div>
+          )}
+
+          {/* ========================================= */}
+          {/* TAB: COMPREHENSIVE SEO AUDIT */}
+          {/* ========================================= */}
+          {activeTab === 'seo-audit' && (
+            <div className="space-y-6">
+              <SeoAuditTool 
+                onBackToLanding={() => setViewMode('landing')}
+                onPricingClick={() => setViewMode('pricing')}
+                onLaunchApp={() => setActiveTab('dashboard')}
+                projectsCount={projects.length}
+              />
+            </div>
+          )}
+
+          {/* ========================================= */}
+          {/* TAB: FREE SEO UTILITIES */}
+          {/* ========================================= */}
+          {activeTab === 'free-tools' && (
+            <div className="space-y-6">
+              <FreeSeoTools 
+                onBackToLanding={() => setViewMode('landing')}
+                onPricingClick={() => setViewMode('pricing')}
+                onLaunchApp={() => setActiveTab('dashboard')}
+              />
+            </div>
+          )}
+
+          {/* ========================================= */}
+          {/* TAB: AI LEAD GEN TOOLS BUILDER */}
+          {/* ========================================= */}
+          {activeTab === 'tool-builder' && (
+            <div className="space-y-6">
+              <AiToolsBuilder 
+                onBackToLanding={() => setViewMode('landing')}
+                projects={projects}
+                selectedProjectId={selectedProject?.id || 'p-1'}
+                activePlan={activePlan}
+              />
             </div>
           )}
 
