@@ -125,6 +125,13 @@ import {
   analytics_service
 } from "./src/affiliate/affiliateService";
 
+import {
+  readAgencyDb,
+  writeAgencyDb,
+  getOrCreateAgency,
+  logActivity
+} from "./src/agency-portal/services/agencyDbService";
+
 
 
 // Initialize Stripe Client Lazily/Safely
@@ -12208,6 +12215,311 @@ app.post("/api/affiliate/simulate-signup", (req, res) => {
 
     const updatedDb = analytics_service.getGlobalAffiliateAnalytics();
     res.json({ success: true, message: `Affiliate action pipeline state [${action}] simulated successfully`, signup: signupRef, global: updatedDb });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+
+// ==========================================
+// Agency White-Label Portal Router API
+// ==========================================
+
+app.get("/api/agency/init", (req, res) => {
+  try {
+    const userId = (req.query.userId as string) || "demo-user";
+    const email = (req.query.email as string) || "demo@ranksyncer.co";
+    
+    const { agency, member } = getOrCreateAgency(userId, email);
+    const db = readAgencyDb();
+    
+    const clients = db.agency_clients.filter(c => c.agency_id === agency.agency_id);
+    const reports = db.agency_reports.filter(r => r.agency_id === agency.agency_id);
+    const teamMembers = db.agency_members.filter(m => m.agency_id === agency.agency_id);
+    const activityLogs = db.agency_activity_logs.filter(l => l.agency_id === agency.agency_id);
+    
+    res.json({
+      success: true,
+      agency,
+      member,
+      clients,
+      reports,
+      teamMembers,
+      activityLogs
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/agency/branding", (req: any, res: any) => {
+  try {
+    const { agencyId, config } = req.body;
+    const db = readAgencyDb();
+    
+    const agencyIndex = db.agencies.findIndex(a => a.agency_id === agencyId);
+    if (agencyIndex === -1) {
+      return res.status(404).json({ success: false, error: "Agency not found" });
+    }
+    
+    db.agencies[agencyIndex].branding_config = {
+      ...db.agencies[agencyIndex].branding_config,
+      ...config
+    };
+    db.agencies[agencyIndex].updated_at = new Date().toISOString();
+    
+    writeAgencyDb(db);
+    logActivity(agencyId, "system", "Branding Module", "White-Label Updated", `Adjusted brand assets to matching specifications: ${config.brandName}.`);
+    
+    res.json({ success: true, agency: db.agencies[agencyIndex] });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/agency/clients/create", (req: any, res: any) => {
+  try {
+    const { agencyId, name, websites, assignedMembers, invitedEmail } = req.body;
+    const db = readAgencyDb();
+    const clientId = `client-${Math.floor(Math.random() * 89999 + 10000)}`;
+    
+    const newClientObj = {
+      client_id: clientId,
+      agency_id: agencyId,
+      name,
+      websites: websites || [],
+      status: "active" as const,
+      invitedEmail: invitedEmail || "",
+      inviteStatus: invitedEmail ? ("pending" as const) : ("none" as const),
+      assignedMembers: assignedMembers || [],
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+    
+    db.agency_clients.push(newClientObj);
+    writeAgencyDb(db);
+    
+    logActivity(agencyId, "system", "Client Manager", "Created Client Portfolio", `Registered website client group '${name}' with default tracking.`);
+    
+    if (invitedEmail) {
+      logActivity(agencyId, "system", "Client Manager", "Client Portal Invitation", `Sent electronic dashboard onboarding payload link to ${invitedEmail}.`);
+    }
+    
+    res.json({ success: true, client: newClientObj });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/agency/clients/update", (req: any, res: any) => {
+  try {
+    const { agencyId, clientId, name, websites, assignedMembers, status } = req.body;
+    const db = readAgencyDb();
+    const clientIndex = db.agency_clients.findIndex(c => c.client_id === clientId && c.agency_id === agencyId);
+    
+    if (clientIndex === -1) {
+      return res.status(404).json({ success: false, error: "Client portfolio not catalogued" });
+    }
+    
+    const client = db.agency_clients[clientIndex];
+    if (name !== undefined) client.name = name;
+    if (websites !== undefined) client.websites = websites;
+    if (assignedMembers !== undefined) client.assignedMembers = assignedMembers;
+    if (status !== undefined) client.status = status;
+    client.updated_at = new Date().toISOString();
+    
+    writeAgencyDb(db);
+    logActivity(agencyId, "system", "Client Manager", "Updated Client Profile", `Refreshed information structure for '${client.name}'.`);
+    
+    res.json({ success: true, client });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/agency/clients/archive", (req: any, res: any) => {
+  try {
+    const { agencyId, clientId } = req.body;
+    const db = readAgencyDb();
+    const clientIndex = db.agency_clients.findIndex(c => c.client_id === clientId && c.agency_id === agencyId);
+    
+    if (clientIndex === -1) {
+      return res.status(404).json({ success: false, error: "Client workspace not found" });
+    }
+    
+    const newStatus = db.agency_clients[clientIndex].status === "active" ? "archived" : "active";
+    db.agency_clients[clientIndex].status = newStatus;
+    db.agency_clients[clientIndex].updated_at = new Date().toISOString();
+    
+    writeAgencyDb(db);
+    logActivity(agencyId, "system", "Client Manager", "Status Modified", `Set operational state of '${db.agency_clients[clientIndex].name}' to ${newStatus}.`);
+    
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/agency/clients/invite", (req: any, res: any) => {
+  try {
+    const { agencyId, clientId, email } = req.body;
+    const db = readAgencyDb();
+    const clientIndex = db.agency_clients.findIndex(c => c.client_id === clientId && c.agency_id === agencyId);
+    
+    if (clientIndex === -1) {
+      return res.status(404).json({ success: false, error: "Client not found" });
+    }
+    
+    db.agency_clients[clientIndex].invitedEmail = email;
+    db.agency_clients[clientIndex].inviteStatus = "pending";
+    db.agency_clients[clientIndex].updated_at = new Date().toISOString();
+    
+    writeAgencyDb(db);
+    logActivity(agencyId, "system", "Client Manager", "Portal Invite Sent", `Dispatched onboarding connection credentials for white-label logs to ${email}.`, clientId);
+    
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/agency/team/role", (req: any, res: any) => {
+  try {
+    const { agencyId, targetUserId, role } = req.body;
+    const db = readAgencyDb();
+    const memberIndex = db.agency_members.findIndex(m => m.user_id === targetUserId && m.agency_id === agencyId);
+    
+    if (memberIndex === -1) {
+      return res.status(404).json({ success: false, error: "Team member record missing" });
+    }
+    
+    db.agency_members[memberIndex].role = role as any;
+    db.agency_members[memberIndex].updated_at = new Date().toISOString();
+    
+    writeAgencyDb(db);
+    logActivity(agencyId, "system", "Team Management", "Role Modified", `Elevated user roles: updated ${db.agency_members[memberIndex].email} role permissions state to ${role}.`);
+    
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/agency/team/add", (req: any, res: any) => {
+  try {
+    const { agencyId, name, email, role } = req.body;
+    const db = readAgencyDb();
+    const user_id = `member-${Math.floor(Math.random() * 8999 + 1000)}`;
+    
+    const newMemberObj = {
+      user_id,
+      agency_id: agencyId,
+      email,
+      role: (role || "specialist") as any,
+      name,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+    
+    db.agency_members.push(newMemberObj);
+    writeAgencyDb(db);
+    logActivity(agencyId, "system", "Team Management", "Added Member", `Enrolled coworker '${name}' with role context [${role}] under white-label workspace.`);
+    
+    res.json({ success: true, member: newMemberObj });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/agency/reports/generate", (req: any, res: any) => {
+  try {
+    const { agencyId, clientId, title, type, summary, recommendations } = req.body;
+    const db = readAgencyDb();
+    
+    const client = db.agency_clients.find(c => c.client_id === clientId);
+    const clientName = client ? client.name : "Acme Digital Resource";
+    
+    const report_id = `rep-${Math.floor(Math.random() * 89999 + 10000)}`;
+    const shareable_token = `tok-sec-${Math.floor(Math.random() * 899999 + 100000)}`;
+    
+    const metricsMap = {
+      seo: { seoScore: 88, keywordsCount: 1610, organicTraffic: 14500, backlinksCount: 220, domainRating: 48 },
+      ranking: { seoScore: 92, keywordsCount: 1820, organicTraffic: 16200, backlinksCount: 245, domainRating: 50 },
+      backlink: { seoScore: 85, keywordsCount: 1410, organicTraffic: 12100, backlinksCount: 310, domainRating: 54 },
+      content: { seoScore: 90, keywordsCount: 2100, organicTraffic: 19800, backlinksCount: 215, domainRating: 49 },
+      growth: { seoScore: 94, keywordsCount: 2450, organicTraffic: 25400, backlinksCount: 330, domainRating: 55 }
+    };
+    
+    const selectedMetrics = metricsMap[type as keyof typeof metricsMap] || metricsMap.seo;
+    
+    const newReport = {
+      report_id,
+      agency_id: agencyId,
+      client_id: clientId,
+      clientName,
+      title,
+      type: type as any,
+      sections: {
+        executiveSummary: summary || "Executive performance metrics indicate an upward projection in high-intent keyword acquisition.",
+        recommendations: recommendations && recommendations.length > 0 ? recommendations : ["Optimize landing metadata headers", "Initiate outreach campaign on relevant niches"]
+      },
+      metrics: selectedMetrics,
+      shareable_token,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+    
+    db.agency_reports.push(newReport);
+    writeAgencyDb(db);
+    logActivity(agencyId, "system", "Report Generator", "Report Compiled", `Successfully generated '${title}' branded PDF-eligible SEO scorecard.`, clientId);
+    
+    res.json({ success: true, report: newReport });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/agency/reports/delete", (req: any, res: any) => {
+  try {
+    const { agencyId, reportId } = req.body;
+    const db = readAgencyDb();
+    
+    const initialLength = db.agency_reports.length;
+    db.agency_reports = db.agency_reports.filter(r => !(r.report_id === reportId && r.agency_id === agencyId));
+    
+    if (db.agency_reports.length === initialLength) {
+      return res.status(404).json({ success: false, error: "Report index mismatch" });
+    }
+    
+    writeAgencyDb(db);
+    logActivity(agencyId, "system", "Report Database", "Report Destroyed", `Successfully purged report '${reportId}' from system archives.`);
+    
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get("/api/agency/reports/public", (req: any, res: any) => {
+  try {
+    const token = req.query.token as string;
+    const db = readAgencyDb();
+    
+    const report = db.agency_reports.find(r => r.shareable_token === token);
+    if (!report) {
+      return res.status(404).json({ success: false, error: "Report link belongs to an invalid reference or has expired" });
+    }
+    
+    const agency = db.agencies.find(a => a.agency_id === report.agency_id);
+    if (!agency) {
+      return res.status(404).json({ success: false, error: "Agency workspace no longer active" });
+    }
+    
+    res.json({
+      success: true,
+      report,
+      agency
+    });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }

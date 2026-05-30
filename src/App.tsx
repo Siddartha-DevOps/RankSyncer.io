@@ -34,7 +34,8 @@ import {
   Share2,
   Radio,
   Wrench,
-  Bot
+  Bot,
+  Building2
 } from 'lucide-react';
 
 import { Project, Keyword, Article, CrawlerLog, AutopilotQueueItem } from './types';
@@ -73,6 +74,7 @@ import { YouTubeEmbedManager } from './components/YouTubeEmbedManager';
 import EnterpriseMultilingualSuite from './components/EnterpriseMultilingualSuite';
 import EnterpriseAIRewriteSuite from './components/EnterpriseAIRewriteSuite';
 import WatermarkSuite from './components/WatermarkSuite';
+import PortalLayout from "./agency-portal/components/PortalLayout";
 import { GhostCmsIntegration } from './components/GhostCmsIntegration';
 import { FramerCmsIntegration } from './components/FramerCmsIntegration';
 import { NotionCmsIntegration } from './components/NotionCmsIntegration';
@@ -127,9 +129,14 @@ export default function App() {
 
   // Navigation & Core States
   const [viewMode, setViewMode] = useState<'landing' | 'app' | 'pricing' | 'integrations' | 'seo-audit' | 'free-tools' | 'tool-builder' | 'affiliate-program'>('landing');
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'projects' | 'keywords' | 'planner' | 'editor' | 'crawler' | 'settings' | 'brand' | 'backlinks' | 'authority' | 'directory' | 'seo-audit' | 'free-tools' | 'tool-builder' | 'affiliate'>('brand');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'projects' | 'keywords' | 'planner' | 'editor' | 'crawler' | 'settings' | 'brand' | 'backlinks' | 'authority' | 'directory' | 'seo-audit' | 'free-tools' | 'tool-builder' | 'affiliate' | 'agency-portal'>('brand');
   const [keywordsSubTab, setKeywordsSubTab] = useState<'explore' | 'tracker' | 'ai-discovery'>('explore');
   const [settingsSubTab, setSettingsSubTab] = useState<'team' | 'integrations' | 'billing' | 'affiliate-admin'>('team');
+
+  // Agency White-Label Branding Overrides State
+  const [wlBrandName, setWlBrandName] = useState<string>("Zenith Agency");
+  const [wlLogoUrl, setWlLogoUrl] = useState<string>("");
+  const [wlEnabled, setWlEnabled] = useState<boolean>(false);
 
   // Affiliate Enrollment & Page Configurations state
   const [isAffiliateEnrolled, setIsAffiliateEnrolled] = useState<boolean>(false);
@@ -1936,9 +1943,22 @@ export default function App() {
       }`}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3.5 flex flex-col md:flex-row md:items-center md:justify-between gap-4 font-sans">
           
-          {/* Brand Logo and Sub */}
+          {/* Brand Logo and Sub with White-Label Overrides */}
           <div className="flex items-center space-x-3 cursor-pointer" onClick={() => setViewMode('landing')}>
-            <RankSyncerLogo theme={theme} />
+            {wlEnabled ? (
+              <div className="flex items-center space-x-2">
+                {wlLogoUrl ? (
+                  <img referrerPolicy="no-referrer" src={wlLogoUrl} alt={wlBrandName} className="h-7 w-auto object-contain max-w-[150px]" />
+                ) : (
+                  <div className="flex items-center space-x-2">
+                    <Building2 className="h-5 w-5 text-emerald-500 animate-pulse" />
+                    <span className="font-sans font-black text-slate-800 dark:text-slate-100 text-sm tracking-tight">{wlBrandName}</span>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <RankSyncerLogo theme={theme} />
+            )}
           </div>
 
           {/* Desktop Shared Navigation Links */}
@@ -2131,6 +2151,7 @@ export default function App() {
               { id: 'seo-audit', label: 'Interactive SEO Audit', icon: SearchCode },
               { id: 'free-tools', label: 'Free SEO Tools', icon: Wrench },
               { id: 'tool-builder', label: 'AI Tools Builder', icon: Bot },
+              { id: 'agency-portal', label: 'Agency White-Label', icon: Building2 },
               { id: 'settings', label: 'Team & Settings', icon: Settings },
               { id: 'brand', label: 'Brand & Assets', icon: BookOpen },
               { id: 'affiliate', label: 'Affiliate Program', icon: Award }
@@ -5627,6 +5648,24 @@ export default function App() {
                 projects={projects}
                 selectedProjectId={selectedProject?.id || 'p-1'}
                 activePlan={activePlan}
+              />
+            </div>
+          )}
+
+          {/* ========================================= */}
+          {/* TAB: AGENCY WHITE-LABEL PORTAL */}
+          {/* ========================================= */}
+          {activeTab === 'agency-portal' && (
+            <div className="space-y-6">
+              <PortalLayout 
+                userId={currentUser?.uid || "demo-agency-owner"}
+                email={currentUser?.email || "owner@zenithagency.com"} 
+                theme={theme}
+                onGlobalBrandingChange={(brandName, logoUrl, enabled) => {
+                  setWlBrandName(brandName);
+                  setWlLogoUrl(logoUrl || "");
+                  setWlEnabled(!!enabled);
+                }}
               />
             </div>
           )}
