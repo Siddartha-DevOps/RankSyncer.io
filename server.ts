@@ -117,6 +117,15 @@ import {
   AiToolLead
 } from "./src/lib/seo/aiToolsBuilderService";
 
+import {
+  affiliate_service,
+  referral_tracking_service,
+  commission_engine,
+  payout_service,
+  analytics_service
+} from "./src/affiliate/affiliateService";
+
+
 
 // Initialize Stripe Client Lazily/Safely
 let stripeClient: any = null;
@@ -12023,7 +12032,184 @@ app.get("/api/team/activity-logs", (req, res) => {
     const logs = db.activity_logs.filter(l => l.organizationId === memberRecord.organizationId);
     res.json({ success: true, logs: logs.slice(0, 50) });
   } catch (err: any) {
-    res.status(500).json({ error: "Failed to grab team collaboration audit feed." });
+    res.status(500).json({ error: err.message || "Failed to fetch activity logs" });
+  }
+});
+
+
+// ============================================================================
+// PRODUCTION GRADE AFFILIATE & REFRRAL PROGRAM API SUITE
+// ============================================================================
+
+// 1. Get Affiliate Account Details and Stats for User
+app.get("/api/affiliate/account", (req, res) => {
+  try {
+    const userId = (req.query.userId as string) || "demo-user";
+    const analytics = analytics_service.getAffiliateAnalytics(userId);
+    res.json({ success: true, analytics });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message || "Failed to load affiliate analytics" });
+  }
+});
+
+// 2. Join Affiliate Program
+app.post("/api/affiliate/join", (req, res) => {
+  try {
+    const { userId = "demo-user", customCode } = req.body;
+    const account = affiliate_service.joinProgram(userId, customCode);
+    const analytics = analytics_service.getAffiliateAnalytics(userId);
+    res.json({ success: true, message: "Successfully activated affiliate partner profile", account, analytics });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message || "Failed to create affiliate portal" });
+  }
+});
+
+// 3. Update Payment Billing Configuration
+app.post("/api/affiliate/payment-info", (req, res) => {
+  try {
+    const { userId = "demo-user", method, address } = req.body;
+    if (!method || !address) {
+      return res.status(400).json({ success: false, error: "Missing required payment parameters" });
+    }
+    const account = affiliate_service.updatePaymentInfo(userId, method, address);
+    res.json({ success: true, message: "Payment configurations updated successfully", account });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message || "Failed to configure payout parameters" });
+  }
+});
+
+// 4. Request Commission Balance Payout
+app.post("/api/affiliate/payout", (req, res) => {
+  try {
+    const { userId = "demo-user", amount, method, address } = req.body;
+    if (!amount || amount <= 0 || !method || !address) {
+      return res.status(400).json({ success: false, error: "Missing required payout withdrawal parameters" });
+    }
+    const payout = payout_service.requestPayout(userId, Number(amount), method, address);
+    res.json({ success: true, message: "Commission payout withdrawal request logged successfully for verification", payout });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message || "Failed to request commission withdrawal" });
+  }
+});
+
+// 5. Get Global Affiliate Analytics and Settings (Admin Panel)
+app.get("/api/affiliate/global", (req, res) => {
+  try {
+    const globalData = analytics_service.getGlobalAffiliateAnalytics();
+    res.json({ success: true, global: globalData });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message || "Failed to grab administrative analytics" });
+  }
+});
+
+// 6. Update Landing Config or FAQ or Rates
+app.post("/api/affiliate/global/config", (req, res) => {
+  try {
+    const { default_commission_rate, landing_stats, promotional_assets, faqs, fraud_rules } = req.body;
+    const updated = analytics_service.updateDynamicConfig({
+      default_commission_rate,
+      landing_stats,
+      promotional_assets,
+      faqs,
+      fraud_rules
+    });
+    res.json({ success: true, message: "Global configurations synchronized successfully", config: updated });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message || "Failed to synchronize global settings" });
+  }
+});
+
+// 7. Update Partner Account Status or Rate (Admin Action)
+app.post("/api/affiliate/admin/account/status", (req, res) => {
+  try {
+    const { affiliateId, status, commissionRate } = req.body;
+    if (!affiliateId || !status) {
+      return res.status(400).json({ success: false, error: "Missing affiliateId or progress status" });
+    }
+    const updated = affiliate_service.updateAccountStatus(affiliateId, status, commissionRate);
+    res.json({ success: true, message: `Partner status shifted to ${status} successfully`, account: updated });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message || "Failed to adjust partner status" });
+  }
+});
+
+// 8. Approve/Reject Payout (Admin Action)
+app.post("/api/affiliate/admin/payout/action", (req, res) => {
+  try {
+    const { payoutId, action, reason } = req.body;
+    if (!payoutId || !action) {
+      return res.status(400).json({ success: false, error: "Missing required payload variables" });
+    }
+
+    let payout;
+    if (action === "approve") {
+      payout = payout_service.approvePayout(payoutId);
+      // Simulates real payment and marks as completed
+      payout_service.payoutCompleted(payoutId);
+    } else {
+      payout = payout_service.rejectPayout(payoutId, reason || "Violation of referral guidelines");
+    }
+
+    res.json({ success: true, message: `Payout request processed successfully: ${action}d`, payout });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message || "Failed to manage payout task" });
+  }
+});
+
+// 9. Simulation click tracker trigger (Simulation Feature)
+app.post("/api/affiliate/simulate-click", (req, res) => {
+  try {
+    const { referralCode, campaign, ip, ua } = req.body;
+    if (!referralCode) {
+      return res.status(400).json({ success: false, error: "Missing tracking referralCode reference" });
+    }
+    const click = referral_tracking_service.trackClick(
+      referralCode,
+      ip || `192.168.${Math.floor(Math.random()*254)}.${Math.floor(Math.random()*254)}`,
+      ua || "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+      campaign || "twitter"
+    );
+    if (!click) {
+      return res.json({ success: false, error: "Click rate-limited or invalid code" });
+    }
+    res.json({ success: true, click });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 10. Simulation signup/trial/upgrade trigger (Simulation Feature)
+app.post("/api/affiliate/simulate-signup", (req, res) => {
+  try {
+    const { referralCode, email, action, planName, mrr } = req.body;
+    if (!referralCode) {
+      return res.status(400).json({ success: false, error: "Missing referralCode reference for assignment" });
+    }
+
+    const testEmail = email || `customer-${Date.now().toString().slice(-4)}@example.com`;
+    const testUserId = `usr-test-${Date.now()}`;
+
+    // Perform the requested pipeline simulation
+    let signupRef = referral_tracking_service.trackSignup(testUserId, testEmail, referralCode);
+    if (!signupRef) {
+      return res.status(400).json({ success: false, error: "Self-referral fraud trigger or registration block" });
+    }
+
+    if (action === "trial") {
+      referral_tracking_service.trackTrial(testUserId);
+    } else if (action === "paid") {
+      const price = mrr || 49;
+      referral_tracking_service.trackUpgrade(testUserId, planName || "Premium Autopilot Suite", price);
+    } else if (action === "cancelled") {
+      referral_tracking_service.trackCancellation(testUserId);
+    } else if (action === "refunded") {
+      referral_tracking_service.trackRefund(testUserId, mrr || 49);
+    }
+
+    const updatedDb = analytics_service.getGlobalAffiliateAnalytics();
+    res.json({ success: true, message: `Affiliate action pipeline state [${action}] simulated successfully`, signup: signupRef, global: updatedDb });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
@@ -12032,6 +12218,7 @@ app.get("/api/team/activity-logs", (req, res) => {
 // Main Vite Server Mounting Middleware Setup
 // ==========================================
 async function startServer() {
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({

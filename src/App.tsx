@@ -87,6 +87,13 @@ import SeoAuditTool from './components/SeoAuditTool';
 import FreeSeoTools from './components/FreeSeoTools';
 import AiToolsBuilder from './components/AiToolsBuilder';
 
+// Affiliate Program Components & Icon imports
+import { Award } from 'lucide-react';
+import AffiliateLandingPage from './affiliate/AffiliateLandingPage';
+import AffiliateDashboard from './affiliate/AffiliateDashboard';
+import AffiliateAdminPanel from './affiliate/AffiliateAdminPanel';
+
+
 
 
 // Firebase Authentication and Relational Sync Client Integrations
@@ -119,10 +126,15 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(true);
 
   // Navigation & Core States
-  const [viewMode, setViewMode] = useState<'landing' | 'app' | 'pricing' | 'integrations' | 'seo-audit' | 'free-tools' | 'tool-builder'>('landing');
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'projects' | 'keywords' | 'planner' | 'editor' | 'crawler' | 'settings' | 'brand' | 'backlinks' | 'authority' | 'directory' | 'seo-audit' | 'free-tools' | 'tool-builder'>('brand');
+  const [viewMode, setViewMode] = useState<'landing' | 'app' | 'pricing' | 'integrations' | 'seo-audit' | 'free-tools' | 'tool-builder' | 'affiliate-program'>('landing');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'projects' | 'keywords' | 'planner' | 'editor' | 'crawler' | 'settings' | 'brand' | 'backlinks' | 'authority' | 'directory' | 'seo-audit' | 'free-tools' | 'tool-builder' | 'affiliate'>('brand');
   const [keywordsSubTab, setKeywordsSubTab] = useState<'explore' | 'tracker' | 'ai-discovery'>('explore');
-  const [settingsSubTab, setSettingsSubTab] = useState<'team' | 'integrations' | 'billing'>('team');
+  const [settingsSubTab, setSettingsSubTab] = useState<'team' | 'integrations' | 'billing' | 'affiliate-admin'>('team');
+
+  // Affiliate Enrollment & Page Configurations state
+  const [isAffiliateEnrolled, setIsAffiliateEnrolled] = useState<boolean>(false);
+  const [affiliateConfig, setAffiliateConfig] = useState<any>(undefined);
+
   
   // AI Keyword Discovery Sync States
   const [discoveredKeywords, setDiscoveredKeywords] = useState<any[]>([]);
@@ -835,6 +847,93 @@ export default function App() {
     });
     return () => unsubscribe();
   }, []);
+
+  // Capture Affiliate links click
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const refCode = params.get('ref') || params.get('affiliate');
+    if (refCode) {
+      const campaignVal = params.get('utm_campaign') || params.get('campaign') || 'direct';
+      console.log('[AFFILIATE TRACKING CLIENT]: Located referral landing tag:', refCode);
+      localStorage.setItem('rs_aff_code', refCode);
+      
+      // Notify backend click logger
+      fetch('/api/affiliate/click', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          referralCode: refCode,
+          campaign: campaignVal
+        })
+      })
+      .then(res => res.json())
+      .then(data => {
+        console.log('[AFFILIATE CLICK STORED]: Server registered click:', data);
+      })
+      .catch(e => {
+        console.error('[AFFILIATE CLICK RECORDING FAIL]:', e);
+      });
+    }
+  }, []);
+
+  // Fetch Affiliate Enrollment state & Page configurations
+  useEffect(() => {
+    // Fetch configuration
+    fetch('/api/affiliate/global')
+      .then(res => res.json())
+      .then(body => {
+        if (body.success && body.global?.config) {
+          setAffiliateConfig(body.global.config);
+        }
+      })
+      .catch(e => console.error('[AFFILIATE CONFIG FETCH FAIL]:', e));
+
+    if (!currentUser) {
+      setIsAffiliateEnrolled(false);
+      return;
+    }
+
+    // Check if enrolled as affiliate
+    fetch(`/api/affiliate/account?userId=${encodeURIComponent(currentUser.uid)}`)
+      .then(res => res.json())
+      .then(body => {
+        if (body.success && body.analytics?.account) {
+          setIsAffiliateEnrolled(body.analytics.account.status === 'approved');
+        } else {
+          setIsAffiliateEnrolled(false);
+        }
+      })
+      .catch(e => {
+        console.error('[AFFILIATE PROFILE CHECK FAIL]:', e);
+        setIsAffiliateEnrolled(false);
+      });
+
+    // Attribute registration if they were referred and logged in
+    const affCode = localStorage.getItem('rs_aff_code');
+    if (affCode) {
+      fetch('/api/affiliate/signup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          referralCode: affCode,
+          email: currentUser.email || `${currentUser.uid}@ranksyncer.co`,
+          userId: currentUser.uid,
+          action: 'signup',
+          planName: 'Free Sandbox Tracker',
+          mrr: 0
+        })
+      })
+      .then(res => res.json())
+      .then(resData => {
+        if (resData.success) {
+          console.log('[AFFILIATE REGISTRATION ATTRIBUTION]: Successfully attributed signup conversion:', resData);
+        }
+      })
+      .catch(err => {
+        console.warn('[AFFILIATE ATTRIBUTION SECURED]: ', err);
+      });
+    }
+  }, [currentUser]);
 
   // Multi-tenant project real-time listener sync
   useEffect(() => {
@@ -1724,6 +1823,42 @@ export default function App() {
     }));
   };
 
+  if (viewMode === 'affiliate-program') {
+    return (
+      <AffiliateLandingPage 
+        isEnrolled={isAffiliateEnrolled}
+        onJoin={async (customCode) => {
+          try {
+            const res = await fetch('/api/affiliate/join', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ 
+                userId: currentUser?.uid || "demo-user", 
+                customCode: customCode || `PARTNER-${(currentUser?.uid || "demo-user").slice(0, 4).toUpperCase()}` 
+              })
+            });
+            const body = await res.json();
+            if (body.success) {
+              setIsAffiliateEnrolled(true);
+              setViewMode('app');
+              setActiveTab('affiliate');
+            } else {
+              alert(`Enrollment failed: ${body.error}`);
+            }
+          } catch (e: any) {
+            alert(`Enrollment error: ${e.message}`);
+          }
+        }}
+        userId={currentUser?.uid || "demo-user"}
+        onGoToDashboard={() => {
+          setViewMode('app');
+          setActiveTab('affiliate');
+        }}
+        backendConfig={affiliateConfig}
+      />
+    );
+  }
+
   if (viewMode === 'landing') {
     return (
       <OutrankLanding 
@@ -1997,7 +2132,8 @@ export default function App() {
               { id: 'free-tools', label: 'Free SEO Tools', icon: Wrench },
               { id: 'tool-builder', label: 'AI Tools Builder', icon: Bot },
               { id: 'settings', label: 'Team & Settings', icon: Settings },
-              { id: 'brand', label: 'Brand & Assets', icon: BookOpen }
+              { id: 'brand', label: 'Brand & Assets', icon: BookOpen },
+              { id: 'affiliate', label: 'Affiliate Program', icon: Award }
             ].map(tab => {
               const Icon = tab.icon;
               const isActive = activeTab === tab.id;
@@ -4676,6 +4812,52 @@ export default function App() {
           )}
 
           {/* ========================================= */}
+          {/* TAB: AFFILIATE PROGRAM & PARTNER CONSOLE */}
+          {/* ========================================= */}
+          {activeTab === 'affiliate' && (
+            <div className="space-y-6">
+              {isAffiliateEnrolled ? (
+                <AffiliateDashboard 
+                  userId={currentUser?.uid || "demo-user"}
+                  userEmail={currentUser?.email || "demo@ranksyncer.co"}
+                  backendConfig={affiliateConfig}
+                  onExit={() => setViewMode('affiliate-program')}
+                />
+              ) : (
+                <AffiliateLandingPage 
+                  isEnrolled={false}
+                  onJoin={async (customCode) => {
+                    try {
+                      const res = await fetch('/api/affiliate/join', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ 
+                          userId: currentUser?.uid || "demo-user", 
+                          customCode: customCode || `PARTNER-${(currentUser?.uid || "demo-user").slice(0, 4).toUpperCase()}` 
+                        })
+                      });
+                      const body = await res.json();
+                      if (body.success) {
+                        setIsAffiliateEnrolled(true);
+                        setActiveTab('affiliate');
+                      } else {
+                        alert(`Enrollment failed: ${body.error}`);
+                      }
+                    } catch (e: any) {
+                      alert(`Enrollment error: ${e.message}`);
+                    }
+                  }}
+                  userId={currentUser?.uid || "demo-user"}
+                  onGoToDashboard={() => {
+                    setActiveTab('affiliate');
+                  }}
+                  backendConfig={affiliateConfig}
+                />
+              )}
+            </div>
+          )}
+
+          {/* ========================================= */}
           {/* TAB: CMS SETTINGS CONNECTED HUB */}
           {/* ========================================= */}
           {activeTab === 'settings' && (
@@ -4719,6 +4901,16 @@ export default function App() {
                   }`}
                 >
                   CMS Connected Hub
+                </button>
+                <button
+                  onClick={() => setSettingsSubTab('affiliate-admin')}
+                  className={`px-4.5 py-3 text-xs font-black border-b-2 transition-all cursor-pointer whitespace-nowrap outline-none ${
+                    settingsSubTab === 'affiliate-admin'
+                      ? 'border-indigo-600 text-indigo-750 font-black shadow-3xs'
+                      : 'border-transparent text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  Affiliate Management
                 </button>
               </div>
 
@@ -5283,6 +5475,22 @@ export default function App() {
                 </div>
               </div>
                 </>
+              )}
+
+              {settingsSubTab === 'affiliate-admin' && (
+                <AffiliateAdminPanel
+                  userId={currentUser?.uid || "demo-user"}
+                  onRefreshGlobalConfig={() => {
+                    fetch('/api/affiliate/global')
+                      .then(res => res.json())
+                      .then(body => {
+                        if (body.success && body.global?.config) {
+                          setAffiliateConfig(body.global.config);
+                        }
+                      })
+                      .catch(e => console.error('[AFFILIATE CONFIG FETCH FAIL]:', e));
+                  }}
+                />
               )}
 
             </div>
