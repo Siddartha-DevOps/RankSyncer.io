@@ -58,6 +58,7 @@ import {
 } from './data/mockData';
 import { evaluateSeoMetrics, parseMarkdownStructure } from './utils/seoAnalyzer';
 import EditorSidebar from './components/EditorSidebar';
+import DeveloperPlatformTab from './developer-platform/components/DeveloperPlatformTab';
 import TopicalClusters from './components/TopicalClusters';
 import AIContentPlanner from './components/AIContentPlanner';
 import AutoPublishScheduler from './components/AutoPublishScheduler';
@@ -131,7 +132,7 @@ export default function App() {
   const [viewMode, setViewMode] = useState<'landing' | 'app' | 'pricing' | 'integrations' | 'seo-audit' | 'free-tools' | 'tool-builder' | 'affiliate-program'>('landing');
   const [activeTab, setActiveTab] = useState<'dashboard' | 'projects' | 'keywords' | 'planner' | 'editor' | 'crawler' | 'settings' | 'brand' | 'backlinks' | 'authority' | 'directory' | 'seo-audit' | 'free-tools' | 'tool-builder' | 'affiliate' | 'agency-portal'>('brand');
   const [keywordsSubTab, setKeywordsSubTab] = useState<'explore' | 'tracker' | 'ai-discovery'>('explore');
-  const [settingsSubTab, setSettingsSubTab] = useState<'team' | 'integrations' | 'billing' | 'affiliate-admin'>('team');
+  const [settingsSubTab, setSettingsSubTab] = useState<'team' | 'integrations' | 'billing' | 'affiliate-admin' | 'developer-api'>('team');
 
   // Agency White-Label Branding Overrides State
   const [wlBrandName, setWlBrandName] = useState<string>("Zenith Agency");
@@ -4882,7 +4883,7 @@ export default function App() {
           {/* TAB: CMS SETTINGS CONNECTED HUB */}
           {/* ========================================= */}
           {activeTab === 'settings' && (
-            <div className="space-y-6 max-w-3xl">
+            <div className={`space-y-6 ${settingsSubTab === 'developer-api' ? 'max-w-7xl w-full' : 'max-w-3xl'}`}>
               
               <div>
                 <h2 className="text-2xl font-black text-slate-900 tracking-tight font-sans">Settings & Workspace Manager</h2>
@@ -4932,6 +4933,16 @@ export default function App() {
                   }`}
                 >
                   Affiliate Management
+                </button>
+                <button
+                  onClick={() => setSettingsSubTab('developer-api')}
+                  className={`px-4.5 py-3 text-xs font-black border-b-2 transition-all cursor-pointer whitespace-nowrap outline-none ${
+                    settingsSubTab === 'developer-api'
+                      ? 'border-indigo-600 text-indigo-750 font-black shadow-3xs'
+                      : 'border-transparent text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  Developer API
                 </button>
               </div>
 
@@ -5512,6 +5523,10 @@ export default function App() {
                       .catch(e => console.error('[AFFILIATE CONFIG FETCH FAIL]:', e));
                   }}
                 />
+              )}
+
+              {settingsSubTab === 'developer-api' && (
+                <DeveloperPlatformTab />
               )}
 
             </div>

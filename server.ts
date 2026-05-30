@@ -132,6 +132,8 @@ import {
   logActivity
 } from "./src/agency-portal/services/agencyDbService";
 
+import { developerRouter } from "./src/developer-platform/api/apiGateway";
+
 
 
 // Initialize Stripe Client Lazily/Safely
@@ -177,6 +179,7 @@ interface CrawlerLog {
 
 const app = express();
 app.use(express.json());
+app.use("/api/developer", developerRouter);
 app.use("/generated-images", express.static(path.join(process.cwd(), "generated-images")));
 const generatedImagesDir = path.join(process.cwd(), "generated-images");
 if (!fs.existsSync(generatedImagesDir)) {
