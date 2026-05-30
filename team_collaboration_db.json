@@ -1,0 +1,197 @@
+{
+  "organizations": [
+    {
+      "id": "demo-org",
+      "name": "Acme SEO Agency",
+      "ownerId": "demo-user",
+      "createdAt": "2026-05-01T08:00:00Z",
+      "billingPlan": "Growth Plan"
+    }
+  ],
+  "organization_members": [
+    {
+      "organizationId": "demo-org",
+      "userId": "demo-user",
+      "email": "sidduchitiki@gmail.com",
+      "name": "Siddu Chitiki",
+      "role": "Owner",
+      "joinedAt": "2026-05-01T08:00:00Z",
+      "lastActive": "2026-05-29T13:58:12Z"
+    },
+    {
+      "organizationId": "demo-org",
+      "userId": "u-2",
+      "email": "sarah@acme.com",
+      "name": "Sarah Jenkins",
+      "role": "Admin",
+      "joinedAt": "2026-05-03T10:15:00Z",
+      "lastActive": "2026-05-29T10:15:00Z"
+    },
+    {
+      "organizationId": "demo-org",
+      "userId": "u-3",
+      "email": "john@acme.com",
+      "name": "John Doe",
+      "role": "Editor",
+      "joinedAt": "2026-05-05T11:42:00Z",
+      "lastActive": "2026-05-29T11:42:00Z"
+    },
+    {
+      "organizationId": "demo-org",
+      "userId": "u-4",
+      "email": "alex@acme.com",
+      "name": "Alex Mercer",
+      "role": "SEO Manager",
+      "joinedAt": "2026-05-10T09:00:00Z",
+      "lastActive": "2026-05-28T16:21:00Z"
+    },
+    {
+      "organizationId": "demo-org",
+      "userId": "u-5",
+      "email": "client@acme-partner.com",
+      "name": "Apex Partner Inc.",
+      "role": "Client",
+      "joinedAt": "2026-05-12T14:30:00Z",
+      "lastActive": "2026-05-27T09:05:00Z"
+    }
+  ],
+  "workspace_invites": [
+    {
+      "id": "inv-1",
+      "organizationId": "demo-org",
+      "email": "kelly@acme.com",
+      "role": "Editor",
+      "status": "pending",
+      "invitedBy": "demo-user",
+      "createdAt": "2026-05-28T09:00:00Z"
+    }
+  ],
+  "workspace_roles": [
+    {
+      "role": "Owner",
+      "description": "Full workspace control + complete billing management & settings transfer."
+    },
+    {
+      "role": "Admin",
+      "description": "Full project curation, SEO tools, keyword lists, and approval triggers."
+    },
+    {
+      "role": "Editor",
+      "description": "Draft generation, article metadata refinement, and planner queues editing."
+    },
+    {
+      "role": "SEO Manager",
+      "description": "Keyword research tools access, SERP crawlers triggers, and SEO analytics reports."
+    },
+    {
+      "role": "Viewer",
+      "description": "Read-only workspace viewing access to look at active planners and trackers metadata."
+    },
+    {
+      "role": "Client",
+      "description": "Read-only access constrained exclusively to reporting tools and published statistics."
+    }
+  ],
+  "workspace_permissions": {
+    "Owner": {
+      "content_planner": true,
+      "ai_writer": true,
+      "keywords": true,
+      "seo_audit": true,
+      "integrations": true,
+      "publishing": true,
+      "billing": true,
+      "analytics": true,
+      "team_management": true
+    },
+    "Admin": {
+      "content_planner": true,
+      "ai_writer": true,
+      "keywords": true,
+      "seo_audit": true,
+      "integrations": true,
+      "publishing": true,
+      "billing": false,
+      "analytics": true,
+      "team_management": true
+    },
+    "Editor": {
+      "content_planner": true,
+      "ai_writer": true,
+      "keywords": false,
+      "seo_audit": false,
+      "integrations": false,
+      "publishing": true,
+      "billing": false,
+      "analytics": false,
+      "team_management": false
+    },
+    "SEO Manager": {
+      "content_planner": false,
+      "ai_writer": false,
+      "keywords": true,
+      "seo_audit": true,
+      "integrations": false,
+      "publishing": false,
+      "billing": false,
+      "analytics": true,
+      "team_management": false
+    },
+    "Viewer": {
+      "content_planner": false,
+      "ai_writer": false,
+      "keywords": false,
+      "seo_audit": false,
+      "integrations": false,
+      "publishing": false,
+      "billing": false,
+      "analytics": true,
+      "team_management": false
+    },
+    "Client": {
+      "content_planner": false,
+      "ai_writer": false,
+      "keywords": false,
+      "seo_audit": false,
+      "integrations": false,
+      "publishing": false,
+      "billing": false,
+      "analytics": true,
+      "team_management": false
+    }
+  },
+  "activity_logs": [
+    {
+      "id": "act-1",
+      "organizationId": "demo-org",
+      "action": "user_invitation",
+      "actor": "sidduchitiki@gmail.com",
+      "details": "Sent workspace invitation to kelly@acme.com as Editor",
+      "createdAt": "2026-05-28T09:00:00Z"
+    },
+    {
+      "id": "act-2",
+      "organizationId": "demo-org",
+      "action": "login_activity",
+      "actor": "sarah@acme.com",
+      "details": "Logged into Acme SEO Agency workspace",
+      "createdAt": "2026-05-29T10:15:00Z"
+    },
+    {
+      "id": "act-3",
+      "organizationId": "demo-org",
+      "action": "article_creation",
+      "actor": "john@acme.com",
+      "details": "Created draft article 'Rank Hacks for Startups'",
+      "createdAt": "2026-05-29T11:10:00Z"
+    },
+    {
+      "id": "act-4",
+      "organizationId": "demo-org",
+      "action": "role_change",
+      "actor": "sidduchitiki@gmail.com",
+      "details": "Promoted Sarah Jenkins to Admin role",
+      "createdAt": "2026-05-25T14:00:00Z"
+    }
+  ]
+}

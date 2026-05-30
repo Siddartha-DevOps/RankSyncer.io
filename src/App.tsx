@@ -78,6 +78,7 @@ import { FramerCmsIntegration } from './components/FramerCmsIntegration';
 import { NotionCmsIntegration } from './components/NotionCmsIntegration';
 import { WordpressCmsIntegration } from './components/WordpressCmsIntegration';
 import { NextjsCmsIntegration } from './components/NextjsCmsIntegration';
+import TeamCollaborationDashboard from './components/TeamCollaborationDashboard';
 import { IntegrationsPage } from './components/IntegrationsPage';
 import { BacklinkNetworkDashboard } from './components/BacklinkNetworkDashboard';
 import AuthorityDashboard from './components/AuthorityDashboard';
@@ -121,6 +122,7 @@ export default function App() {
   const [viewMode, setViewMode] = useState<'landing' | 'app' | 'pricing' | 'integrations' | 'seo-audit' | 'free-tools' | 'tool-builder'>('landing');
   const [activeTab, setActiveTab] = useState<'dashboard' | 'projects' | 'keywords' | 'planner' | 'editor' | 'crawler' | 'settings' | 'brand' | 'backlinks' | 'authority' | 'directory' | 'seo-audit' | 'free-tools' | 'tool-builder'>('brand');
   const [keywordsSubTab, setKeywordsSubTab] = useState<'explore' | 'tracker' | 'ai-discovery'>('explore');
+  const [settingsSubTab, setSettingsSubTab] = useState<'team' | 'integrations' | 'billing'>('team');
   
   // AI Keyword Discovery Sync States
   const [discoveredKeywords, setDiscoveredKeywords] = useState<any[]>([]);
@@ -1994,7 +1996,7 @@ export default function App() {
               { id: 'seo-audit', label: 'Interactive SEO Audit', icon: SearchCode },
               { id: 'free-tools', label: 'Free SEO Tools', icon: Wrench },
               { id: 'tool-builder', label: 'AI Tools Builder', icon: Bot },
-              { id: 'settings', label: 'CMS Connected Hub', icon: Settings },
+              { id: 'settings', label: 'Team & Settings', icon: Settings },
               { id: 'brand', label: 'Brand & Assets', icon: BookOpen }
             ].map(tab => {
               const Icon = tab.icon;
@@ -4680,82 +4682,128 @@ export default function App() {
             <div className="space-y-6 max-w-3xl">
               
               <div>
-                <h2 className="text-2xl font-black text-slate-900 tracking-tight">Connected Integrations Hub</h2>
+                <h2 className="text-2xl font-black text-slate-900 tracking-tight font-sans">Settings & Workspace Manager</h2>
                 <p className="text-slate-500 text-sm mt-0.5">
-                  Securely bind your target headless CMS or custom proxy crawlers to the sync nodes
+                  Configure multi-user organizations, manage Stripe billing plan quotas, and connect headless CMS publishing nodes.
                 </p>
               </div>
 
-              {/* Database Sync Engine Panel */}
-              <div className="bg-gradient-to-br from-slate-900 to-[#0c1c15] text-white p-6 rounded-3xl border border-[#1b3f30] shadow-lg relative overflow-hidden">
-                <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/10 blur-3xl pointer-events-none rounded-full" />
-                <div className="flex justify-between items-start gap-4">
-                  <div className="space-y-1">
-                    <span className="text-[10px] uppercase tracking-wider text-emerald-400 font-extrabold flex items-center gap-1.5 font-mono">
-                      <span className={`h-2 w-2 rounded-full ${currentUser ? 'bg-emerald-400 animate-pulse shadow-[0_0_8px_#10b981]' : 'bg-slate-450'}`} />
-                      {currentUser ? 'Continuous Relational Database persistence: Active' : 'Relational Sync Engine: Offline Sandbox'}
-                    </span>
-                    <h3 className="text-lg font-black tracking-tight font-sans text-white">RankSyncer.co Relational Persistence</h3>
-                    <p className="text-slate-350 text-xs max-w-xl leading-relaxed mt-1">
-                      Continuous multi-tenant cloud storage protecting credentials, site domain portfolios, dynamic briefs, and historical crawler logs in Google Firestore. Protects project workspace across tabs and systems.
-                    </p>
-                  </div>
-                  <div className="p-3 bg-slate-800/80 rounded-2xl border border-slate-700 shrink-0">
-                    <Database className="h-5 w-5 text-emerald-400" />
-                  </div>
-                </div>
-
-                <div className="mt-6 pt-5 border-t border-[#122b20] flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                  {currentUser ? (
-                    <div className="flex items-center space-x-3">
-                      {currentUser.photoURL ? (
-                        <img referrerPolicy="no-referrer" src={currentUser.photoURL} alt="Avatar" className="h-8 w-8 rounded-xl border border-emerald-500/20" />
-                      ) : (
-                        <div className="h-8 w-8 rounded-xl bg-emerald-600 font-black text-xs flex items-center justify-center text-white shrink-0">
-                          {currentUser.email?.charAt(0).toUpperCase()}
-                        </div>
-                      )}
-                      <div>
-                        <p className="text-xs font-black text-white">{currentUser.displayName || 'Authorized Tenant'}</p>
-                        <p className="text-[10px] text-slate-400 font-mono select-all text-ellipsis overflow-hidden max-w-[180px] sm:max-w-none">{currentUser.email}</p>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="text-slate-400 text-xs flex items-center gap-2">
-                       Active Session: <span className="bg-slate-800 text-slate-300 font-mono text-[10px] px-2 py-0.5 rounded border border-slate-700">Client Local persistence</span>
-                    </div>
-                  )}
-
-                  <div>
-                    {currentUser ? (
-                      <button 
-                        onClick={logOutFromFirebase}
-                        className="px-4 py-2 bg-slate-800 hover:bg-slate-750 text-slate-200 rounded-xl text-xs font-extrabold transition-all cursor-pointer border border-slate-700 shadow-sm"
-                      >
-                        Disconnect Sync
-                      </button>
-                    ) : (
-                      <button 
-                        onClick={signInWithGoogle}
-                        className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-black rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-2 shadow-xs"
-                      >
-                        <UserCheck className="h-4 w-4 text-black" />
-                        Enable Relational Sync (Google Sign-In)
-                      </button>
-                    )}
-                  </div>
-                </div>
+              {/* Settings Sub tab Switchers Bar */}
+              <div className="flex border-b border-slate-200 gap-1 overflow-x-auto pb-px">
+                <button
+                  onClick={() => setSettingsSubTab('team')}
+                  className={`px-4.5 py-3 text-xs font-black border-b-2 transition-all cursor-pointer whitespace-nowrap outline-none ${
+                    settingsSubTab === 'team'
+                      ? 'border-indigo-600 text-indigo-750 font-black shadow-3xs'
+                      : 'border-transparent text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  Organization & Team
+                </button>
+                <button
+                  onClick={() => setSettingsSubTab('billing')}
+                  className={`px-4.5 py-3 text-xs font-black border-b-2 transition-all cursor-pointer whitespace-nowrap outline-none ${
+                    settingsSubTab === 'billing'
+                      ? 'border-indigo-600 text-indigo-750 font-black shadow-3xs'
+                      : 'border-transparent text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  Stripe Subscription Plan
+                </button>
+                <button
+                  onClick={() => setSettingsSubTab('integrations')}
+                  className={`px-4.5 py-3 text-xs font-black border-b-2 transition-all cursor-pointer whitespace-nowrap outline-none ${
+                    settingsSubTab === 'integrations'
+                      ? 'border-indigo-600 text-indigo-750 font-black shadow-3xs'
+                      : 'border-transparent text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  CMS Connected Hub
+                </button>
               </div>
 
-              {/* SaaS Subscription & Stripe Billing Center with Volume Discounts */}
-              <BillingDashboardView
-                projectsCount={projects.length}
-                activePlan={activePlan}
-                setActivePlan={setActivePlan}
-                userId={currentUser?.uid || "demo-user"}
-              />
+              {settingsSubTab === 'team' && (
+                <TeamCollaborationDashboard
+                  userId={currentUser?.uid || "demo-user"}
+                  userEmail={currentUser?.email || "sidduchitiki@gmail.com"}
+                  activePlan={activePlan}
+                />
+              )}
 
-              <div className="bg-white rounded-3xl border border-slate-200 shadow-2xs divide-y divide-slate-100 overflow-hidden">
+              {settingsSubTab === 'billing' && (
+                <BillingDashboardView
+                  projectsCount={projects.length}
+                  activePlan={activePlan}
+                  setActivePlan={setActivePlan}
+                  userId={currentUser?.uid || "demo-user"}
+                />
+              )}
+
+              {settingsSubTab === 'integrations' && (
+                <div className="bg-gradient-to-br from-slate-900 to-[#0c1c15] text-white p-6 rounded-3xl border border-[#1b3f30] shadow-lg relative overflow-hidden">
+                  <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/10 blur-3xl pointer-events-none rounded-full" />
+                  <div className="flex justify-between items-start gap-4">
+                    <div className="space-y-1">
+                      <span className="text-[10px] uppercase tracking-wider text-emerald-400 font-extrabold flex items-center gap-1.5 font-mono">
+                        <span className={`h-2 w-2 rounded-full ${currentUser ? 'bg-emerald-400 animate-pulse shadow-[0_0_8px_#10b981]' : 'bg-slate-450'}`} />
+                        {currentUser ? 'Continuous Relational Database persistence: Active' : 'Relational Sync Engine: Offline Sandbox'}
+                      </span>
+                      <h3 className="text-lg font-black tracking-tight font-sans text-white">RankSyncer.co Relational Persistence</h3>
+                      <p className="text-slate-350 text-xs max-w-xl leading-relaxed mt-1">
+                        Continuous multi-tenant cloud storage protecting credentials, site domain portfolios, dynamic briefs, and historical crawler logs in Google Firestore. Protects project workspace across tabs and systems.
+                      </p>
+                    </div>
+                    <div className="p-3 bg-slate-800/80 rounded-2xl border border-slate-700 shrink-0">
+                      <Database className="h-5 w-5 text-emerald-400" />
+                    </div>
+                  </div>
+
+                  <div className="mt-6 pt-5 border-t border-[#122b20] flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    {currentUser ? (
+                      <div className="flex items-center space-x-3">
+                        {currentUser.photoURL ? (
+                          <img referrerPolicy="no-referrer" src={currentUser.photoURL} alt="Avatar" className="h-8 w-8 rounded-xl border border-emerald-500/20" />
+                        ) : (
+                          <div className="h-8 w-8 rounded-xl bg-emerald-600 font-black text-xs flex items-center justify-center text-white shrink-0">
+                            {currentUser.email?.charAt(0).toUpperCase()}
+                          </div>
+                        )}
+                        <div>
+                          <p className="text-xs font-black text-white">{currentUser.displayName || 'Authorized Tenant'}</p>
+                          <p className="text-[10px] text-slate-400 font-mono select-all text-ellipsis overflow-hidden max-w-[180px] sm:max-w-none">{currentUser.email}</p>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-slate-405 text-xs flex items-center gap-2 font-semibold">
+                         Active Session: <span className="bg-slate-800 text-slate-300 font-mono text-[10px] px-2 py-0.5 rounded border border-slate-700">Client Local persistence</span>
+                      </div>
+                    )}
+
+                    <div>
+                      {currentUser ? (
+                        <button 
+                          onClick={logOutFromFirebase}
+                          className="px-4 py-2 bg-slate-800 hover:bg-slate-750 text-slate-200 rounded-xl text-xs font-extrabold transition-all cursor-pointer border border-slate-700 shadow-sm"
+                        >
+                          Disconnect Sync
+                        </button>
+                      ) : (
+                        <button 
+                          onClick={signInWithGoogle}
+                          className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-black rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-2 shadow-xs"
+                        >
+                          <UserCheck className="h-4 w-4 text-black" />
+                          Enable Relational Sync (Google Sign-In)
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {settingsSubTab === 'integrations' && (
+                <>
+                  <div className="bg-white rounded-3xl border border-slate-200 shadow-2xs divide-y divide-slate-100 overflow-hidden">
                 
                 {/* CMS 1: WordPress */}
                 <div className="p-6 flex flex-col gap-4">
@@ -5234,6 +5282,8 @@ export default function App() {
                   </button>
                 </div>
               </div>
+                </>
+              )}
 
             </div>
           )}

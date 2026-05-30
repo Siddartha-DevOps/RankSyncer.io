@@ -11470,6 +11470,565 @@ app.get("/api/ai-tools/analytics/:toolId", (req, res) => {
 
 
 // ==========================================
+// Multi-User Organization Access System
+// ==========================================
+const teamDbPath = path.join(process.cwd(), "team_collaboration_db.json");
+
+interface Organization {
+  id: string;
+  name: string;
+  ownerId: string;
+  createdAt: string;
+  billingPlan: string;
+}
+
+interface OrgMember {
+  organizationId: string;
+  userId: string;
+  email: string;
+  name: string;
+  role: string;
+  joinedAt: string;
+  lastActive: string;
+}
+
+interface WorkspaceInvite {
+  id: string;
+  organizationId: string;
+  email: string;
+  role: string;
+  status: 'pending' | 'accepted' | 'expired' | 'cancelled';
+  invitedBy: string;
+  createdAt: string;
+}
+
+interface TeamActivityLog {
+  id: string;
+  organizationId: string;
+  action: string;
+  actor: string;
+  details: string;
+  createdAt: string;
+}
+
+interface TeamDb {
+  organizations: Organization[];
+  organization_members: OrgMember[];
+  workspace_invites: WorkspaceInvite[];
+  workspace_roles: any[];
+  workspace_permissions: Record<string, any>;
+  activity_logs: TeamActivityLog[];
+}
+
+function readTeamDb(): TeamDb {
+  try {
+    if (fs.existsSync(teamDbPath)) {
+      return JSON.parse(fs.readFileSync(teamDbPath, "utf8"));
+    }
+  } catch (err) {
+    console.error("[TEAM COLLAB DB]: Error reading team_collaboration_db.json:", err);
+  }
+  return {
+    organizations: [],
+    organization_members: [],
+    workspace_invites: [],
+    workspace_roles: [],
+    workspace_permissions: {},
+    activity_logs: []
+  };
+}
+
+function writeTeamDb(data: TeamDb) {
+  try {
+    fs.writeFileSync(teamDbPath, JSON.stringify(data, null, 2), "utf8");
+  } catch (err) {
+    console.error("[TEAM COLLAB DB]: Serious error writing team_collaboration_db.json:", err);
+  }
+}
+
+// 1. Get Organization overview & team configuration
+app.get("/api/team/organization", (req, res) => {
+  try {
+    const db = readTeamDb();
+    const userId = (req.query.userId as string) || "demo-user";
+    
+    // Find organization where user is a member
+    const memberRecord = db.organization_members.find(m => m.userId === userId);
+    if (!memberRecord) {
+      return res.json({
+        success: true,
+        hasOrg: false,
+        message: "No active workspace organization association found for current user session."
+      });
+    }
+
+    const org = db.organizations.find(o => o.id === memberRecord.organizationId);
+    if (!org) {
+      return res.status(404).json({ error: "Associated organization not found." });
+    }
+
+    const members = db.organization_members.filter(m => m.organizationId === org.id);
+    const invites = db.workspace_invites.filter(i => i.organizationId === org.id);
+    const permissions = db.workspace_permissions;
+    const roles = db.workspace_roles;
+
+    res.json({
+      success: true,
+      hasOrg: true,
+      organization: org,
+      members,
+      invites,
+      permissions,
+      roles,
+      currentUserRole: memberRecord.role
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "Failed to load team data" });
+  }
+});
+
+// 2. Create Organization
+app.post("/api/team/organization/create", (req, res) => {
+  try {
+    const db = readTeamDb();
+    const { userId, name, billingPlan } = req.body;
+    if (!userId || !name) {
+      return res.status(400).json({ error: "User ID and Organization Name are required." });
+    }
+
+    // Check if user already owns or belongs to an org
+    const exists = db.organization_members.find(m => m.userId === userId);
+    if (exists) {
+      return res.status(400).json({ error: "User is already associated with an active organization workspace." });
+    }
+
+    const orgId = "org-" + Date.now();
+    const newOrg: Organization = {
+      id: orgId,
+      name,
+      ownerId: userId,
+      createdAt: new Date().toISOString(),
+      billingPlan: billingPlan || "Growth Plan"
+    };
+
+    const newMember: OrgMember = {
+      organizationId: orgId,
+      userId,
+      email: "partner-user@ranksyncer.com",
+      name: "Acme Owner",
+      role: "Owner",
+      joinedAt: new Date().toISOString(),
+      lastActive: new Date().toISOString()
+    };
+
+    db.organizations.push(newOrg);
+    db.organization_members.push(newMember);
+
+    // Dynamic Audit Logging
+    const newLog: TeamActivityLog = {
+      id: "act-" + Date.now(),
+      organizationId: orgId,
+      action: "organization_creation",
+      actor: newMember.email,
+      details: `Created new workspace organization: "${name}" (${newOrg.billingPlan})`,
+      createdAt: new Date().toISOString()
+    };
+    db.activity_logs.unshift(newLog);
+
+    writeTeamDb(db);
+    res.json({ success: true, organization: newOrg, member: newMember });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "Failed to create organization" });
+  }
+});
+
+// 3. Invite member via Email
+app.post("/api/team/members/invite", (req, res) => {
+  try {
+    const db = readTeamDb();
+    const { orgId, email, role, invitedBy } = req.body;
+    if (!orgId || !email || !role || !invitedBy) {
+      return res.status(400).json({ error: "Missing required invitation fields: orgId, email, role, and invitedBy" });
+    }
+
+    // Role-based verification: only Owner or Admin can trigger invitation
+    const actor = db.organization_members.find(m => m.userId === invitedBy && m.organizationId === orgId);
+    if (!actor || (actor.role !== "Owner" && actor.role !== "Admin")) {
+      return res.status(403).json({ error: "Unauthorized: Only Owner or Admin can invite team members." });
+    }
+
+    const org = db.organizations.find(o => o.id === orgId);
+    if (!org) {
+      return res.status(404).json({ error: "Organization not found" });
+    }
+
+    // Billing integration limit enforcement:
+    const activeMembersCount = db.organization_members.filter(m => m.organizationId === orgId).length;
+    const pendingInvitesCount = db.workspace_invites.filter(i => i.organizationId === orgId && i.status === "pending").length;
+    const totalSeatsUsed = activeMembersCount + pendingInvitesCount;
+
+    if (org.billingPlan === "Starter Plan" && totalSeatsUsed >= 1) {
+      return res.status(400).json({
+        error: "Billing Limit Exhausted: Starter Plan only allows 1 active seat. Please upgrade to the Growth Plan or Agency Plan inside the Billing Hub to expand seats."
+      });
+    } else if (org.billingPlan === "Growth Plan" && totalSeatsUsed >= 5) {
+      return res.status(400).json({
+        error: "Billing Limit Exhausted: Growth Plan allows up to 5 active seats. Upgrade to the Agency Plan for unlimited collaboration."
+      });
+    }
+
+    // Check duplicates
+    const duplicateMember = db.organization_members.find(m => m.organizationId === orgId && m.email.toLowerCase() === email.toLowerCase());
+    if (duplicateMember) {
+      return res.status(400).json({ error: "This user is already an active member of this organization workspace." });
+    }
+
+    const duplicateInvite = db.workspace_invites.find(i => i.organizationId === orgId && i.email.toLowerCase() === email.toLowerCase() && i.status === "pending");
+    if (duplicateInvite) {
+      return res.status(400).json({ error: "An active pending invitation is already outstanding for this email address." });
+    }
+
+    const inviteId = "inv-" + Date.now();
+    const newInvite: WorkspaceInvite = {
+      id: inviteId,
+      organizationId: orgId,
+      email: email.trim(),
+      role,
+      status: "pending",
+      invitedBy: actor.email,
+      createdAt: new Date().toISOString()
+    };
+
+    db.workspace_invites.push(newInvite);
+
+    // Logging action
+    const newLog: TeamActivityLog = {
+      id: "act-" + Date.now(),
+      organizationId: orgId,
+      action: "user_invitation",
+      actor: actor.email,
+      details: `Sent workspace invitation to ${email} as ${role}`,
+      createdAt: new Date().toISOString()
+    };
+    db.activity_logs.unshift(newLog);
+
+    writeTeamDb(db);
+    res.json({ success: true, invite: newInvite, message: `Successfully invited ${email} as a team ${role}!` });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "Failed to issue invitation" });
+  }
+});
+
+// 4. Cancel invitation
+app.post("/api/team/invites/cancel", (req, res) => {
+  try {
+    const db = readTeamDb();
+    const { inviteId, userId } = req.body;
+    
+    const invite = db.workspace_invites.find(i => i.id === inviteId);
+    if (!invite) return res.status(404).json({ error: "Invitation not found" });
+
+    const actor = db.organization_members.find(m => m.userId === userId && m.organizationId === invite.organizationId);
+    if (!actor || (actor.role !== "Owner" && actor.role !== "Admin")) {
+      return res.status(403).json({ error: "Unauthorized: Insufficient permissions to cancel inviting pending users." });
+    }
+
+    invite.status = "cancelled";
+
+    // Logging
+    const newLog: TeamActivityLog = {
+      id: "act-" + Date.now(),
+      organizationId: invite.organizationId,
+      action: "invite_cancelled",
+      actor: actor.email,
+      details: `Cancelled pending invitation sent to ${invite.email}`,
+      createdAt: new Date().toISOString()
+    };
+    db.activity_logs.unshift(newLog);
+
+    writeTeamDb(db);
+    res.json({ success: true, invite, message: `Cancelled invitation to ${invite.email} successfully.` });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "Failed to cancel invitation" });
+  }
+});
+
+// 5. Accept invitation (simulation endpoint)
+app.post("/api/team/invites/accept", (req, res) => {
+  try {
+    const db = readTeamDb();
+    const { inviteId } = req.body;
+    
+    const invite = db.workspace_invites.find(i => i.id === inviteId);
+    if (!invite) return res.status(404).json({ error: "Invitation record not found" });
+    if (invite.status !== "pending") {
+      return res.status(400).json({ error: `Cannot accept invite with status: ${invite.status}` });
+    }
+
+    invite.status = "accepted";
+
+    const parts = invite.email.split("@");
+    const nameStr = parts[0].replace(/\b\w/g, c => c.toUpperCase()) + " (" + invite.role + ")";
+
+    const newMember: OrgMember = {
+      organizationId: invite.organizationId,
+      userId: "u-" + Date.now(),
+      email: invite.email,
+      name: nameStr,
+      role: invite.role,
+      joinedAt: new Date().toISOString(),
+      lastActive: new Date().toISOString()
+    };
+
+    db.organization_members.push(newMember);
+
+    // Logging
+    const newLog: TeamActivityLog = {
+      id: "act-" + Date.now(),
+      organizationId: invite.organizationId,
+      action: "invitation_accepted",
+      actor: invite.email,
+      details: `Accepted invitation and joined the workspace organization as ${invite.role}`,
+      createdAt: new Date().toISOString()
+    };
+    db.activity_logs.unshift(newLog);
+
+    writeTeamDb(db);
+    res.json({ success: true, member: newMember, message: `Successfully associated ${invite.email} with workspace organization!` });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "Failed to accept invitation" });
+  }
+});
+
+// 6. Resend Invite simulation
+app.post("/api/team/invites/resend", (req, res) => {
+  try {
+    const db = readTeamDb();
+    const { inviteId, userId } = req.body;
+
+    const invite = db.workspace_invites.find(i => i.id === inviteId);
+    if (!invite) return res.status(404).json({ error: "Invitation record not found" });
+
+    const actor = db.organization_members.find(m => m.userId === userId && m.organizationId === invite.organizationId);
+    if (!actor || (actor.role !== "Owner" && actor.role !== "Admin")) {
+      return res.status(403).json({ error: "Unauthorized: Insufficient permissions." });
+    }
+
+    invite.createdAt = new Date().toISOString();
+
+    // Logging
+    const newLog: TeamActivityLog = {
+      id: "act-" + Date.now(),
+      organizationId: invite.organizationId,
+      action: "invite_resent",
+      actor: actor.email,
+      details: `Resent workspace invitation to ${invite.email}`,
+      createdAt: new Date().toISOString()
+    };
+    db.activity_logs.unshift(newLog);
+
+    writeTeamDb(db);
+    res.json({ success: true, invite, message: `Successfully resent invitation mailer outline sequence to ${invite.email}.` });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "Failed to resend invitation" });
+  }
+});
+
+// 7. Remove team member
+app.post("/api/team/members/remove", (req, res) => {
+  try {
+    const db = readTeamDb();
+    const { orgId, targetUserId, userId } = req.body;
+    
+    if (targetUserId === userId) {
+      return res.status(400).json({ error: "Self-Removal Forbidden. Ownership must be transferred first if you desire to leave." });
+    }
+
+    const actor = db.organization_members.find(m => m.userId === userId && m.organizationId === orgId);
+    if (!actor || (actor.role !== "Owner" && actor.role !== "Admin")) {
+      return res.status(403).json({ error: "Unauthorized: Only Owner or Admin can execute member termination." });
+    }
+
+    const targetMember = db.organization_members.find(m => m.userId === targetUserId && m.organizationId === orgId);
+    if (!targetMember) {
+      return res.status(404).json({ error: "Target team member not found or already terminated." });
+    }
+
+    // Owner protection
+    if (targetMember.role === "Owner") {
+      return res.status(400).json({ error: "Security Restriction: Workspace Owner cannot be removed. Transfer ownership first." });
+    }
+
+    // Admin terminating another Admin restriction
+    if (actor.role === "Admin" && targetMember.role === "Admin") {
+      return res.status(403).json({ error: "Admin cannot terminate another Admin. Owner permission required." });
+    }
+
+    db.organization_members = db.organization_members.filter(m => !(m.userId === targetUserId && m.organizationId === orgId));
+
+    // Logging
+    const newLog: TeamActivityLog = {
+      id: "act-" + Date.now(),
+      organizationId: orgId,
+      action: "user_removal",
+      actor: actor.email,
+      details: `Terminated workspace membership for ${targetMember.email} (Role: ${targetMember.role})`,
+      createdAt: new Date().toISOString()
+    };
+    db.activity_logs.unshift(newLog);
+
+    writeTeamDb(db);
+    res.json({ success: true, message: `Successfully removed ${targetMember.name} from your workspace organization.` });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "Failed to remove member" });
+  }
+});
+
+// 8. Change member role
+app.post("/api/team/members/role", (req, res) => {
+  try {
+    const db = readTeamDb();
+    const { orgId, targetUserId, newRole, userId } = req.body;
+
+    const actor = db.organization_members.find(m => m.userId === userId && m.organizationId === orgId);
+    if (!actor || (actor.role !== "Owner" && actor.role !== "Admin")) {
+      return res.status(403).json({ error: "Unauthorized: Insufficient privilege to adjust member roles." });
+    }
+
+    const targetMember = db.organization_members.find(m => m.userId === targetUserId && m.organizationId === orgId);
+    if (!targetMember) {
+      return res.status(404).json({ error: "Member not found." });
+    }
+
+    if (targetMember.role === "Owner") {
+      return res.status(400).json({ error: "Security Restriction: Owner role cannot be downgraded directly. Perform Ownership Transfer instead." });
+    }
+
+    if (actor.role === "Admin" && (targetMember.role === "Admin" || newRole === "Admin" || newRole === "Owner")) {
+      return res.status(403).json({ error: "Security Restriction: Admins cannot promote/demote other Admins, or elevate users to Owner." });
+    }
+
+    const oldRole = targetMember.role;
+    targetMember.role = newRole;
+
+    // Logging
+    const newLog: TeamActivityLog = {
+      id: "act-" + Date.now(),
+      organizationId: orgId,
+      action: "role_change",
+      actor: actor.email,
+      details: `Changed role for ${targetMember.name} (from ${oldRole} to ${newRole})`,
+      createdAt: new Date().toISOString()
+    };
+    db.activity_logs.unshift(newLog);
+
+    writeTeamDb(db);
+    res.json({ success: true, member: targetMember, message: `Successfully updated ${targetMember.name}'s role to ${newRole}.` });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "Failed to update role" });
+  }
+});
+
+// 9. Transfer ownership
+app.post("/api/team/ownership/transfer", (req, res) => {
+  try {
+    const db = readTeamDb();
+    const { orgId, targetUserId, userId } = req.body;
+
+    const actor = db.organization_members.find(m => m.userId === userId && m.organizationId === orgId);
+    if (!actor || actor.role !== "Owner") {
+      return res.status(403).json({ error: "Unauthorized: Only the current Workspace Owner can execute ownership transfer." });
+    }
+
+    const targetMember = db.organization_members.find(m => m.userId === targetUserId && m.organizationId === orgId);
+    if (!targetMember) {
+      return res.status(404).json({ error: "Target user not found in workspace." });
+    }
+
+    const org = db.organizations.find(o => o.id === orgId);
+    if (!org) return res.status(404).json({ error: "Org not found" });
+
+    // Swapping
+    actor.role = "Admin";
+    targetMember.role = "Owner";
+    org.ownerId = targetUserId;
+
+    // Logging
+    const newLog: TeamActivityLog = {
+      id: "act-" + Date.now(),
+      organizationId: orgId,
+      action: "ownership_transfer",
+      actor: actor.email,
+      details: `TRANSFERRED WORKSPACE OWNERSHIP to ${targetMember.name}. Previous Owner demoted to Admin.`,
+      createdAt: new Date().toISOString()
+    };
+    db.activity_logs.unshift(newLog);
+
+    writeTeamDb(db);
+    res.json({ success: true, message: `Transfer complete! Ownership successfully passed to ${targetMember.name}.` });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "Failed to transfer ownership" });
+  }
+});
+
+// 10. Update role permissions map
+app.post("/api/team/permissions/update", (req, res) => {
+  try {
+    const db = readTeamDb();
+    const { userId, orgId, role, permissionKey, value } = req.body;
+
+    const actor = db.organization_members.find(m => m.userId === userId && m.organizationId === orgId);
+    if (!actor || actor.role !== "Owner") {
+      return res.status(403).json({ error: "Unauthorized: Only the Workspace Owner can customize system role permissions schema." });
+    }
+
+    if (role === "Owner") {
+      return res.status(400).json({ error: "Owner role permissions cannot be customized and must remain as absolute keys." });
+    }
+
+    if (!db.workspace_permissions[role]) {
+      db.workspace_permissions[role] = {};
+    }
+
+    db.workspace_permissions[role][permissionKey] = value;
+
+    // Logging
+    const newLog: TeamActivityLog = {
+      id: "act-" + Date.now(),
+      organizationId: orgId,
+      action: "permission_update",
+      actor: actor.email,
+      details: `Customized "${role}" role permission for [${permissionKey}] = ${value}`,
+      createdAt: new Date().toISOString()
+    };
+    db.activity_logs.unshift(newLog);
+
+    writeTeamDb(db);
+    res.json({ success: true, permissions: db.workspace_permissions, message: `Permissions for role ${role} updated.` });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "Failed to update permissions schema" });
+  }
+});
+
+// 11. Fetch list of team activity/audit logs
+app.get("/api/team/activity-logs", (req, res) => {
+  try {
+    const db = readTeamDb();
+    const userId = (req.query.userId as string) || "demo-user";
+    const memberRecord = db.organization_members.find(m => m.userId === userId);
+    if (!memberRecord) {
+      return res.json({ success: true, logs: [] });
+    }
+
+    const logs = db.activity_logs.filter(l => l.organizationId === memberRecord.organizationId);
+    res.json({ success: true, logs: logs.slice(0, 50) });
+  } catch (err: any) {
+    res.status(500).json({ error: "Failed to grab team collaboration audit feed." });
+  }
+});
+
+
+// ==========================================
 // Main Vite Server Mounting Middleware Setup
 // ==========================================
 async function startServer() {
